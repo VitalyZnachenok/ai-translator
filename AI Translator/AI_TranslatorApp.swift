@@ -19,10 +19,51 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     private var popover: NSPopover?
     private var settingsWindow: NSWindow?
     private var sharedSettingsManager = SettingsManager() // Общий экземпляр
+    private var localEventMonitor: Any?
+    
+    deinit {
+        // Очищаем мониторы событий
+        if let monitor = localEventMonitor {
+            NSEvent.removeMonitor(monitor)
+        }
+    }
     
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupMenuBar()
+        setupHotKeys()
         NSApp.setActivationPolicy(.accessory)
+    }
+    
+    private func setupHotKeys() {
+        // Добавляем локальный обработчик событий клавиатуры
+        localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            if self?.handleKeyEvent(event) == true {
+                return nil // Перехватываем событие
+            }
+            return event // Пропускаем событие дальше
+        }
+    }
+    
+    private func handleKeyEvent(_ event: NSEvent) -> Bool {
+        // Проверяем Cmd+, (настройки)
+        if event.modifierFlags.contains(.command) &&
+           event.charactersIgnoringModifiers == "," {
+            DispatchQueue.main.async { [weak self] in
+                self?.showSettings()
+            }
+            return true
+        }
+        
+        // Проверяем Cmd+O (открыть переводчик)
+        if event.modifierFlags.contains(.command) &&
+           event.charactersIgnoringModifiers == "o" {
+            DispatchQueue.main.async { [weak self] in
+                self?.showMainWindow()
+            }
+            return true
+        }
+        
+        return false
     }
     
     private func setupMenuBar() {
@@ -151,7 +192,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
     
     @objc private func quit() {
+        // Очищаем мониторы событий
+        if let monitor = localEventMonitor {
+            NSEvent.removeMonitor(monitor)
+            localEventMonitor = nil
+        }
+        
         NSApp.terminate(nil)
+    }
+    
+    func applicationWillTerminate(_ notification: Notification) {
+        // Дополнительная очистка при завершении
+        if let monitor = localEventMonitor {
+            NSEvent.removeMonitor(monitor)
+            localEventMonitor = nil
+        }
     }
 }
 
@@ -1051,4 +1106,3 @@ enum TranslationError: LocalizedError {
         }
     }
 }
-
