@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+<key>NSAppTransportSecurity</key>
+<dict>
+    <key>NSAllowsArbitraryLoads</key>
+    <true/>
+</dict>
+<key>NSHumanReadableCopyright</key>
+<string>© 2024 Your Name. All rights reserved.</string>
+<key>CFBundleDisplayName</key>
+<string>AI Переводчик</string>
+<key>LSUIElement</key>
+<true/>
+<key>LSBackgroundOnly</key>
+<false/>
+</dict>
+</plist>
+
