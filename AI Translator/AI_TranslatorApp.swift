@@ -17,15 +17,15 @@ struct TranslatorApp: App {
 class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     private var statusBarItem: NSStatusItem?
     private var popover: NSPopover?
-    private var settingsWindow: NSWindow?
-    private var sharedSettingsManager = SettingsManager() // Общий экземпляр
+    private weak var settingsWindow: NSWindow? // ИЗМЕНЕНО: weak ссылка
+    private weak var mainWindow: NSWindow? // ИЗМЕНЕНО: добавлена weak ссылка для главного окна
+    private var sharedSettingsManager = SettingsManager()
     private var localEventMonitor: Any?
+    private var globalEventMonitor: Any? // ДОБАВЛЕНО: для глобального мониторинга
     
     deinit {
         // Очищаем мониторы событий
-        if let monitor = localEventMonitor {
-            NSEvent.removeMonitor(monitor)
-        }
+        removeEventMonitors()
     }
     
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -41,6 +41,24 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 return nil // Перехватываем событие
             }
             return event // Пропускаем событие дальше
+        }
+        
+        // ДОБАВЛЕНО: Глобальный монитор для закрытия popover при клике вне его
+        globalEventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+            if self?.popover?.isShown == true {
+                self?.closePopover()
+            }
+        }
+    }
+    
+    private func removeEventMonitors() {
+        if let monitor = localEventMonitor {
+            NSEvent.removeMonitor(monitor)
+            localEventMonitor = nil
+        }
+        if let monitor = globalEventMonitor {
+            NSEvent.removeMonitor(monitor)
+            globalEventMonitor = nil
         }
     }
     
@@ -63,6 +81,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             return true
         }
         
+        // ДОБАВЛЕНО: Cmd+Q для выхода
+        if event.modifierFlags.contains(.command) &&
+           event.charactersIgnoringModifiers == "q" {
+            DispatchQueue.main.async { [weak self] in
+                self?.quit()
+            }
+            return true
+        }
+        
         return false
     }
     
@@ -71,7 +98,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         
         guard let button = statusBarItem?.button else { return }
         
-        button.image = NSImage(systemSymbolName: "globe", accessibilityDescription: "AI Переводчик")
+        // УЛУЧШЕНО: создаем собственную иконку
+        if let image = createTranslatorIcon() {
+            button.image = image
+        } else {
+            button.image = NSImage(systemSymbolName: "globe", accessibilityDescription: "AI Переводчик")
+        }
+        
         button.imagePosition = .imageOnly
         
         // Убираем автоматическое меню и настраиваем кастомное поведение
@@ -82,11 +115,56 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         setupPopover()
     }
     
+    // ДОБАВЛЕНО: Создание кастомной иконки
+    private func createTranslatorIcon() -> NSImage? {
+        let size = NSSize(width: 18, height: 18)
+        let image = NSImage(size: size)
+        
+        image.lockFocus()
+        defer { image.unlockFocus() }
+        
+        // Рисуем глобус с буквами
+        let config = NSImage.SymbolConfiguration(pointSize: 14, weight: .medium)
+        if let globeImage = NSImage(systemSymbolName: "globe", accessibilityDescription: nil)?
+            .withSymbolConfiguration(config) {
+            
+            let rect = NSRect(x: 2, y: 2, width: 14, height: 14)
+            globeImage.draw(in: rect)
+            
+            // Добавляем маленькие буквы AI
+            let font = NSFont.systemFont(ofSize: 6, weight: .bold)
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: font,
+                .foregroundColor: NSColor.controlTextColor
+            ]
+            
+            let aiText = "AI"
+            let textSize = aiText.size(withAttributes: attributes)
+            let textRect = NSRect(
+                x: size.width - textSize.width - 1,
+                y: 1,
+                width: textSize.width,
+                height: textSize.height
+            )
+            
+            // Фон для текста
+            NSColor.controlBackgroundColor.withAlphaComponent(0.8).setFill()
+            let bgRect = textRect.insetBy(dx: -1, dy: 0)
+            NSBezierPath(roundedRect: bgRect, xRadius: 2, yRadius: 2).fill()
+            
+            aiText.draw(in: textRect, withAttributes: attributes)
+        }
+        
+        image.isTemplate = true
+        return image
+    }
+    
     @objc private func statusBarButtonClicked(_ sender: NSStatusBarButton) {
         let event = NSApp.currentEvent!
         
         if event.type == .rightMouseUp {
             // Правый клик - показываем контекстное меню
+            closePopover()
             showContextMenu()
         } else {
             // Левый клик - показываем/скрываем popover
@@ -97,10 +175,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     private func showContextMenu() {
         let menu = NSMenu()
         
-        menu.addItem(NSMenuItem(title: "🌐 Открыть переводчик", action: #selector(showMainWindow), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "🌐 Открыть переводчик", action: #selector(showMainWindow), keyEquivalent: "o"))
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "⚙️ Настройки...", action: #selector(showSettings), keyEquivalent: ","))
         menu.addItem(NSMenuItem.separator())
+        
+        // ДОБАВЛЕНО: История переводов
+        menu.addItem(NSMenuItem(title: "📋 История переводов", action: #selector(showHistory), keyEquivalent: "h"))
+        menu.addItem(NSMenuItem.separator())
+        
         menu.addItem(NSMenuItem(title: "📖 О программе", action: #selector(showAbout), keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "❌ Выйти", action: #selector(quit), keyEquivalent: "q"))
@@ -118,7 +201,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         popover = NSPopover()
         popover?.contentSize = NSSize(width: 450, height: 550)
         popover?.behavior = .transient
-        popover?.contentViewController = NSHostingController(rootView: CompactContentView(settingsManager: sharedSettingsManager))
+        popover?.animates = true // ДОБАВЛЕНО: анимация
+        popover?.contentViewController = NSHostingController(
+            rootView: CompactContentView(settingsManager: sharedSettingsManager)
+        )
     }
     
     @objc private func togglePopover() {
@@ -126,49 +212,98 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         
         if let popover = popover {
             if popover.isShown {
-                popover.performClose(nil)
+                closePopover()
             } else {
+                // УЛУЧШЕНО: закрываем все окна перед показом popover
+                mainWindow?.close()
+                settingsWindow?.close()
+                
                 popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
                 popover.contentViewController?.view.window?.becomeKey()
             }
         }
     }
     
+    private func closePopover() {
+        popover?.performClose(nil)
+    }
+    
     @objc func showMainWindow() {
-        let mainWindow = NSWindow(
+        // УЛУЧШЕНО: проверяем существующее окно
+        if let existingWindow = mainWindow, existingWindow.isVisible {
+            existingWindow.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+        
+        closePopover() // Закрываем popover при открытии главного окна
+        
+        let newWindow = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 750, height: 700),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         
-        mainWindow.title = "AI Переводчик"
-        mainWindow.contentView = NSHostingView(rootView: ContentView(settingsManager: sharedSettingsManager))
-        mainWindow.center()
-        mainWindow.makeKeyAndOrderFront(nil)
+        newWindow.title = "AI Переводчик"
+        newWindow.isReleasedWhenClosed = false // ВАЖНО: предотвращаем автоматическое освобождение
+        newWindow.minSize = NSSize(width: 600, height: 500) // ДОБАВЛЕНО: минимальный размер
+        newWindow.contentView = NSHostingView(
+            rootView: ContentView(settingsManager: sharedSettingsManager)
+        )
+        newWindow.center()
+        newWindow.delegate = self // ДОБАВЛЕНО: делегат для обработки закрытия
+        
+        mainWindow = newWindow
+        newWindow.makeKeyAndOrderFront(nil)
         
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
     }
     
     @objc func showSettings() {
-        if settingsWindow == nil {
-            settingsWindow = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 500, height: 600),
-                styleMask: [.titled, .closable],
-                backing: .buffered,
-                defer: false
-            )
-            settingsWindow?.title = "Настройки"
-            settingsWindow?.contentView = NSHostingView(rootView: SettingsView(settingsManager: sharedSettingsManager))
-            
-            // Добавляем обработчик закрытия окна
-            settingsWindow?.delegate = self
+        // УЛУЧШЕНО: проверяем существующее окно
+        if let existingWindow = settingsWindow, existingWindow.isVisible {
+            existingWindow.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
         }
         
-        settingsWindow?.center()
-        settingsWindow?.makeKeyAndOrderFront(nil)
+        closePopover() // Закрываем popover при открытии настроек
+        
+        let newWindow = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 600, height: 700),
+            styleMask: [.titled, .closable, .miniaturizable],
+            backing: .buffered,
+            defer: false
+        )
+        
+        newWindow.title = "Настройки"
+        newWindow.isReleasedWhenClosed = false // ВАЖНО: предотвращаем автоматическое освобождение
+        
+        // ИЗМЕНЕНО: создаем SettingsView с замыканием для закрытия
+        let settingsView = SettingsView(settingsManager: sharedSettingsManager) { [weak newWindow] in
+            newWindow?.close()
+        }
+        
+        newWindow.contentView = NSHostingView(rootView: settingsView)
+        newWindow.delegate = self
+        
+        settingsWindow = newWindow
+        
+        newWindow.center()
+        newWindow.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+    
+    // ДОБАВЛЕНО: метод показа истории
+    @objc private func showHistory() {
+        let alert = NSAlert()
+        alert.messageText = "История переводов"
+        alert.informativeText = "Функция истории переводов будет добавлена в следующей версии"
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
     }
     
     @objc private func showAbout() {
@@ -185,37 +320,62 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         • Работа из меню-бара
         • Быстрый доступ и компактный интерфейс
         
+        Горячие клавиши:
+        • Cmd+O - открыть переводчик
+        • Cmd+, - настройки
+        • Cmd+Q - выход
+        
         Создано для удобного перевода текстов с помощью ИИ.
         """
+        aboutPanel.alertStyle = .informational
         aboutPanel.addButton(withTitle: "OK")
         aboutPanel.runModal()
     }
     
     @objc private func quit() {
+        // Закрываем все окна
+        popover?.performClose(nil)
+        settingsWindow?.close()
+        mainWindow?.close()
+        
         // Очищаем мониторы событий
-        if let monitor = localEventMonitor {
-            NSEvent.removeMonitor(monitor)
-            localEventMonitor = nil
-        }
+        removeEventMonitors()
         
         NSApp.terminate(nil)
     }
     
     func applicationWillTerminate(_ notification: Notification) {
         // Дополнительная очистка при завершении
-        if let monitor = localEventMonitor {
-            NSEvent.removeMonitor(monitor)
-            localEventMonitor = nil
-        }
+        removeEventMonitors()
+        
+        // Очищаем ссылки на окна
+        settingsWindow = nil
+        mainWindow = nil
+        popover = nil
+    }
+    
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        // НЕ завершаем приложение при закрытии окон, так как работаем из меню-бара
+        return false
     }
 }
 
-// MARK: - Расширение для обработки закрытия окна настроек
+// MARK: - Расширение для обработки закрытия окон
 extension AppDelegate: NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
-        if notification.object as? NSWindow == settingsWindow {
-            settingsWindow = nil
+        if let window = notification.object as? NSWindow {
+            if window == settingsWindow {
+                settingsWindow = nil
+            } else if window == mainWindow {
+                mainWindow = nil
+                // Возвращаемся в режим accessory при закрытии главного окна
+                NSApp.setActivationPolicy(.accessory)
+            }
         }
+    }
+    
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        return true
     }
 }
 
@@ -224,7 +384,7 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject private var translationService = TranslationService()
-    @ObservedObject var settingsManager: SettingsManager // Принимаем извне
+    @ObservedObject var settingsManager: SettingsManager
     
     @State private var inputText = ""
     @State private var outputText = ""
@@ -234,6 +394,8 @@ struct ContentView: View {
     @State private var selectedTargetLanguage = "ru"
     @State private var errorMessage = ""
     @State private var showingError = false
+    @State private var copyFeedback = false // ДОБАВЛЕНО: обратная связь при копировании
+    @State private var keyEventMonitor: Any? // ДОБАВЛЕНО: для отслеживания Cmd+Enter
     
     let languages = [
         ("auto", "🌐 Авто-определение"),
@@ -249,7 +411,9 @@ struct ContentView: View {
         ("pt", "🇵🇹 Português"),
         ("ar", "🇸🇦 العربية"),
         ("hi", "🇮🇳 हिन्दी"),
-        ("tr", "🇹🇷 Türkçe")
+        ("tr", "🇹🇷 Türkçe"),
+        ("uk", "🇺🇦 Українська"), // ДОБАВЛЕНО: украинский
+        ("pl", "🇵🇱 Polski") // ДОБАВЛЕНО: польский
     ]
     
     init(settingsManager: SettingsManager) {
@@ -269,12 +433,23 @@ struct ContentView: View {
                 
                 Spacer()
                 
+                // ДОБАВЛЕНО: индикатор статуса подключения
+                HStack(spacing: 4) {
+                    Circle()
+                        .fill(settingsManager.isConfigured ? Color.green : Color.red)
+                        .frame(width: 8, height: 8)
+                    Text(settingsManager.isConfigured ? "Подключено" : "Не настроено")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                
                 Button(action: { showingSettings = true }) {
                     Image(systemName: "gearshape.fill")
                         .font(.title2)
                         .foregroundColor(.gray)
                 }
                 .buttonStyle(PlainButtonStyle())
+                .help("Настройки (⌘,)")
             }
             .padding(.horizontal)
             
@@ -301,6 +476,7 @@ struct ContentView: View {
                 }
                 .buttonStyle(PlainButtonStyle())
                 .disabled(selectedSourceLanguage == "auto")
+                .help("Поменять языки местами")
                 
                 VStack(alignment: .leading) {
                     Text("На какой язык:")
@@ -327,6 +503,16 @@ struct ContentView: View {
                     
                     Spacer()
                     
+                    // ДОБАВЛЕНО: кнопка очистки
+                    if !inputText.isEmpty {
+                        Button(action: { inputText = "" }) {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(.gray)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .help("Очистить текст")
+                    }
+                    
                     Text("\(inputText.count)/5000")
                         .font(.caption)
                         .foregroundColor(inputText.count > 4500 ? .red : .secondary)
@@ -351,32 +537,54 @@ struct ContentView: View {
             .padding(.horizontal)
             
             // Кнопка перевода
-            Button(action: translateText) {
-                HStack {
-                    if isTranslating {
-                        ProgressView()
-                            .scaleEffect(0.8)
-                            .progressViewStyle(CircularProgressViewStyle())
-                    } else {
-                        Image(systemName: "arrow.right.circle.fill")
+            HStack(spacing: 12) {
+                Button(action: translateText) {
+                    HStack {
+                        if isTranslating {
+                            ProgressView()
+                                .scaleEffect(0.8)
+                                .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                        } else {
+                            Image(systemName: "arrow.right.circle.fill")
+                        }
+                        Text(isTranslating ? "Переводим..." : "Перевести")
                     }
-                    Text(isTranslating ? "Переводим..." : "Перевести")
-                }
-                .font(.headline)
-                .foregroundColor(.white)
-                .padding(.horizontal, 20)
-                .padding(.vertical, 10)
-                .background(
-                    LinearGradient(
-                        gradient: Gradient(colors: [.blue, .purple]),
-                        startPoint: .leading,
-                        endPoint: .trailing
+                    .font(.headline)
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 10)
+                    .background(
+                        LinearGradient(
+                            gradient: Gradient(colors: [.blue, .purple]),
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
                     )
-                )
-                .cornerRadius(10)
+                    .cornerRadius(10)
+                    .shadow(radius: 2)
+                }
+                .disabled(inputText.isEmpty || isTranslating || !settingsManager.isConfigured)
+                .buttonStyle(PlainButtonStyle())
+                .help("Перевести текст (⌘↩)")
+                
+                // ДОБАВЛЕНО: подсказка о горячей клавише
+                Text("⌘↩")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .help("Нажмите Cmd+Enter для быстрого перевода")
+                
+                // ДОБАВЛЕНО: кнопка вставки из буфера
+                Button(action: pasteFromClipboard) {
+                    HStack {
+                        Image(systemName: "doc.on.clipboard")
+                        Text("Вставить")
+                    }
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(.blue)
+                }
+                .buttonStyle(PlainButtonStyle())
+                .help("Вставить текст из буфера обмена")
             }
-            .disabled(inputText.isEmpty || isTranslating || !settingsManager.isConfigured)
-            .buttonStyle(PlainButtonStyle())
             
             // Результат перевода
             VStack(alignment: .leading, spacing: 8) {
@@ -388,12 +596,26 @@ struct ContentView: View {
                     Spacer()
                     
                     if !outputText.isEmpty {
-                        Button(action: copyToClipboard) {
-                            Image(systemName: "doc.on.clipboard")
-                            Text("Копировать")
+                        HStack(spacing: 8) {
+                            Button(action: copyToClipboard) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: copyFeedback ? "checkmark" : "doc.on.clipboard")
+                                        .foregroundColor(copyFeedback ? .green : .blue)
+                                    Text(copyFeedback ? "Скопировано!" : "Копировать")
+                                        .foregroundColor(copyFeedback ? .green : .blue)
+                                }
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                            .help("Копировать перевод в буфер обмена")
+                            
+                            // ДОБАВЛЕНО: кнопка очистки результата
+                            Button(action: { outputText = "" }) {
+                                Image(systemName: "trash")
+                                    .foregroundColor(.gray)
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                            .help("Очистить результат")
                         }
-                        .buttonStyle(PlainButtonStyle())
-                        .foregroundColor(.blue)
                     }
                 }
                 
@@ -417,7 +639,17 @@ struct ContentView: View {
                         .foregroundColor(.orange)
                     Text("Настройте подключение к OpenWebUI в настройках")
                         .foregroundColor(.orange)
+                    
+                    Spacer()
+                    
+                    Button("Открыть настройки") {
+                        showingSettings = true
+                    }
+                    .buttonStyle(LinkButtonStyle())
                 }
+                .padding()
+                .background(Color.orange.opacity(0.1))
+                .cornerRadius(8)
                 .padding(.horizontal)
             }
             
@@ -435,6 +667,33 @@ struct ContentView: View {
         }
         .onAppear {
             translationService.configure(with: settingsManager)
+            setupKeyboardShortcuts()
+        }
+        .onDisappear {
+            removeKeyboardShortcuts()
+        }
+    }
+    
+    // ДОБАВЛЕНО: настройка горячих клавиш
+    private func setupKeyboardShortcuts() {
+        keyEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            // Проверяем Cmd+Enter для отправки перевода
+            if event.modifierFlags.contains(.command) &&
+               event.keyCode == 36 && // 36 = Return/Enter
+               !self.inputText.isEmpty &&
+               !self.isTranslating &&
+               self.settingsManager.isConfigured {
+                self.translateText()
+                return nil // Перехватываем событие
+            }
+            return event
+        }
+    }
+    
+    private func removeKeyboardShortcuts() {
+        if let monitor = keyEventMonitor {
+            NSEvent.removeMonitor(monitor)
+            keyEventMonitor = nil
         }
     }
     
@@ -444,6 +703,7 @@ struct ContentView: View {
         selectedSourceLanguage = selectedTargetLanguage
         selectedTargetLanguage = temp
         
+        // Также меняем местами тексты
         let tempText = inputText
         inputText = outputText
         outputText = tempText
@@ -454,6 +714,7 @@ struct ContentView: View {
         
         isTranslating = true
         outputText = ""
+        errorMessage = ""
         
         Task {
             do {
@@ -481,13 +742,32 @@ struct ContentView: View {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(outputText, forType: .string)
+        
+        // Показываем обратную связь
+        withAnimation(.easeInOut(duration: 0.2)) {
+            copyFeedback = true
+        }
+        
+        // Убираем обратную связь через 2 секунды
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                copyFeedback = false
+            }
+        }
+    }
+    
+    // ДОБАВЛЕНО: вставка из буфера
+    private func pasteFromClipboard() {
+        if let string = NSPasteboard.general.string(forType: .string) {
+            inputText = string
+        }
     }
 }
 
 // MARK: - CompactContentView (Компактный вид для popover)
 struct CompactContentView: View {
     @StateObject private var translationService = TranslationService()
-    @ObservedObject var settingsManager: SettingsManager // Принимаем извне
+    @ObservedObject var settingsManager: SettingsManager
     
     @State private var inputText = ""
     @State private var outputText = ""
@@ -496,6 +776,8 @@ struct CompactContentView: View {
     @State private var selectedTargetLanguage = "ru"
     @State private var errorMessage = ""
     @State private var showingError = false
+    @State private var copyFeedback = false // ДОБАВЛЕНО
+    @State private var keyEventMonitor: Any? // ДОБАВЛЕНО: для отслеживания Cmd+Enter
     
     let languages = [
         ("auto", "🌐 Авто"),
@@ -511,7 +793,9 @@ struct CompactContentView: View {
         ("pt", "🇵🇹 PT"),
         ("ar", "🇸🇦 AR"),
         ("hi", "🇮🇳 HI"),
-        ("tr", "🇹🇷 TR")
+        ("tr", "🇹🇷 TR"),
+        ("uk", "🇺🇦 UA"), // ДОБАВЛЕНО
+        ("pl", "🇵🇱 PL") // ДОБАВЛЕНО
     ]
     
     init(settingsManager: SettingsManager) {
@@ -520,14 +804,32 @@ struct CompactContentView: View {
     
     var body: some View {
         VStack(spacing: 12) {
-            // Заголовок
+            // Заголовок с индикатором статуса
             HStack {
                 Image(systemName: "globe")
                     .foregroundColor(.blue)
                 Text("AI Переводчик")
                     .font(.headline)
                     .fontWeight(.bold)
+                
                 Spacer()
+                
+                // Индикатор статуса
+                Circle()
+                    .fill(settingsManager.isConfigured ? Color.green : Color.red)
+                    .frame(width: 6, height: 6)
+                
+                // Кнопка полной версии
+                Button(action: {
+                    if let appDelegate = NSApp.delegate as? AppDelegate {
+                        appDelegate.showMainWindow()
+                    }
+                }) {
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        .font(.caption)
+                }
+                .buttonStyle(PlainButtonStyle())
+                .help("Открыть полную версию (⌘O)")
             }
             .padding(.horizontal)
             
@@ -543,6 +845,7 @@ struct CompactContentView: View {
                 
                 Button(action: swapLanguages) {
                     Image(systemName: "arrow.left.arrow.right")
+                        .font(.caption)
                         .foregroundColor(.blue)
                 }
                 .buttonStyle(PlainButtonStyle())
@@ -558,14 +861,13 @@ struct CompactContentView: View {
                 
                 Spacer()
                 
-                // Кнопка полной версии
-                Button("🔍") {
-                    if let appDelegate = NSApp.delegate as? AppDelegate {
-                        appDelegate.showMainWindow()
-                    }
+                // Кнопка вставки
+                Button(action: pasteFromClipboard) {
+                    Image(systemName: "doc.on.clipboard")
+                        .font(.caption)
                 }
                 .buttonStyle(PlainButtonStyle())
-                .help("Открыть полную версию")
+                .help("Вставить из буфера")
             }
             .padding(.horizontal)
             
@@ -576,6 +878,14 @@ struct CompactContentView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                     Spacer()
+                    if !inputText.isEmpty {
+                        Button(action: { inputText = "" }) {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.caption2)
+                                .foregroundColor(.gray)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                    }
                     Text("\(inputText.count)/1000")
                         .font(.caption2)
                         .foregroundColor(inputText.count > 900 ? .red : .secondary)
@@ -601,7 +911,7 @@ struct CompactContentView: View {
                     if isTranslating {
                         ProgressView()
                             .scaleEffect(0.7)
-                            .progressViewStyle(CircularProgressViewStyle())
+                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
                     } else {
                         Image(systemName: "arrow.right.circle.fill")
                     }
@@ -622,6 +932,7 @@ struct CompactContentView: View {
             }
             .disabled(inputText.isEmpty || isTranslating || !settingsManager.isConfigured)
             .buttonStyle(PlainButtonStyle())
+            .help("Перевести текст (⌘↩)")
             
             // Результат (компактный)
             VStack(alignment: .leading, spacing: 4) {
@@ -634,11 +945,11 @@ struct CompactContentView: View {
                     
                     if !outputText.isEmpty {
                         Button(action: copyToClipboard) {
-                            Image(systemName: "doc.on.clipboard")
+                            Image(systemName: copyFeedback ? "checkmark" : "doc.on.clipboard")
                                 .font(.caption)
+                                .foregroundColor(copyFeedback ? .green : .blue)
                         }
                         .buttonStyle(PlainButtonStyle())
-                        .foregroundColor(.blue)
                         .help("Копировать")
                     }
                 }
@@ -659,12 +970,12 @@ struct CompactContentView: View {
             
             // Предупреждение о настройках
             if !settingsManager.isConfigured {
-                HStack {
+                HStack(spacing: 4) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundColor(.orange)
-                        .font(.caption)
+                        .font(.caption2)
                     Text("Настройте подключение")
-                        .font(.caption)
+                        .font(.caption2)
                         .foregroundColor(.orange)
                     
                     Spacer()
@@ -674,10 +985,12 @@ struct CompactContentView: View {
                             appDelegate.showSettings()
                         }
                     }
-                    .font(.caption)
-                    .buttonStyle(PlainButtonStyle())
-                    .foregroundColor(.blue)
+                    .font(.caption2)
+                    .buttonStyle(LinkButtonStyle())
                 }
+                .padding(8)
+                .background(Color.orange.opacity(0.1))
+                .cornerRadius(6)
                 .padding(.horizontal)
             }
             
@@ -687,11 +1000,38 @@ struct CompactContentView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
             translationService.configure(with: settingsManager)
+            setupKeyboardShortcuts()
+        }
+        .onDisappear {
+            removeKeyboardShortcuts()
         }
         .alert("Ошибка", isPresented: $showingError) {
             Button("OK") { }
         } message: {
             Text(errorMessage)
+        }
+    }
+    
+    // ДОБАВЛЕНО: настройка горячих клавиш
+    private func setupKeyboardShortcuts() {
+        keyEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            // Проверяем Cmd+Enter для отправки перевода
+            if event.modifierFlags.contains(.command) &&
+               event.keyCode == 36 && // 36 = Return/Enter
+               !self.inputText.isEmpty &&
+               !self.isTranslating &&
+               self.settingsManager.isConfigured {
+                self.translateText()
+                return nil // Перехватываем событие
+            }
+            return event
+        }
+    }
+    
+    private func removeKeyboardShortcuts() {
+        if let monitor = keyEventMonitor {
+            NSEvent.removeMonitor(monitor)
+            keyEventMonitor = nil
         }
     }
     
@@ -738,6 +1078,23 @@ struct CompactContentView: View {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(outputText, forType: .string)
+        
+        // Обратная связь
+        withAnimation(.easeInOut(duration: 0.2)) {
+            copyFeedback = true
+        }
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                copyFeedback = false
+            }
+        }
+    }
+    
+    private func pasteFromClipboard() {
+        if let string = NSPasteboard.general.string(forType: .string) {
+            inputText = string
+        }
     }
 }
 
@@ -747,6 +1104,7 @@ import SwiftUI
 struct SettingsView: View {
     @ObservedObject var settingsManager: SettingsManager
     @Environment(\.dismiss) private var dismiss
+    let onClose: (() -> Void)? // ДОБАВЛЕНО: замыкание для закрытия
     
     @State private var apiUrl = ""
     @State private var apiToken = ""
@@ -756,113 +1114,194 @@ struct SettingsView: View {
     @State private var isTestingConnection = false
     @State private var testResult = ""
     @State private var showingTestResult = false
+    @State private var showAdvancedSettings = false // ДОБАВЛЕНО: расширенные настройки
+    
+    init(settingsManager: SettingsManager, onClose: (() -> Void)? = nil) {
+        self.settingsManager = settingsManager
+        self.onClose = onClose
+    }
     
     var body: some View {
         NavigationView {
-            Form {
-                Section(header: Text("🔗 Подключение к OpenWebUI")) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("URL API:")
-                            .font(.headline)
-                        TextField("https://your-openwebui.com", text: $apiUrl)
-                            .textFieldStyle(.roundedBorder)
-                    }
-                    
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("API Token:")
-                            .font(.headline)
-                        SecureField("Ваш API токен", text: $apiToken)
-                            .textFieldStyle(.roundedBorder)
-                    }
-                    
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Модель для перевода:")
-                            .font(.headline)
-                        TextField("gpt-4, claude-3-sonnet, llama2 и т.д.", text: $modelName)
-                            .textFieldStyle(.roundedBorder)
-                    }
-                }
-                
-                Section(header: Text("⚙️ Параметры генерации")) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Temperature: \(String(format: "%.1f", temperature))")
-                            .font(.headline)
-                        Slider(value: $temperature, in: 0.0...1.0, step: 0.1)
-                        Text("Контролирует креативность перевода (0.0 - точный, 1.0 - творческий)")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Max Tokens: \(maxTokens)")
-                            .font(.headline)
-                        Slider(value: Binding(
-                            get: { Double(maxTokens) },
-                            set: { maxTokens = Int($0) }
-                        ), in: 256...4096, step: 256)
-                        Text("Максимальная длина ответа")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                }
-                
-                Section(header: Text("🧪 Тестирование")) {
-                    Button(action: testConnection) {
-                        HStack {
-                            if isTestingConnection {
-                                ProgressView()
-                                    .scaleEffect(0.8)
-                            } else {
-                                Image(systemName: "network")
+            ScrollView {
+                VStack(spacing: 20) {
+                    // Основные настройки
+                    GroupBox(label: Label("🔗 Подключение к OpenWebUI", systemImage: "network")) {
+                        VStack(alignment: .leading, spacing: 12) {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("URL API:")
+                                    .font(.headline)
+                                TextField("https://your-openwebui.com/v1", text: $apiUrl)
+                                    .textFieldStyle(.roundedBorder)
+                                    .help("Базовый URL вашего OpenWebUI API")
                             }
-                            Text(isTestingConnection ? "Тестируем..." : "Тест подключения")
+                            
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("API Token:")
+                                    .font(.headline)
+                                HStack {
+                                    SecureField("Ваш API токен", text: $apiToken)
+                                        .textFieldStyle(.roundedBorder)
+                                    
+                                    // ДОБАВЛЕНО: кнопка показа/скрытия токена
+                                    Button(action: {}) {
+                                        Image(systemName: "eye.slash")
+                                    }
+                                    .buttonStyle(PlainButtonStyle())
+                                    .disabled(true) // TODO: реализовать переключение видимости
+                                }
+                            }
+                            
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Модель для перевода:")
+                                    .font(.headline)
+                                TextField("gpt-4, claude-3-sonnet, llama2 и т.д.", text: $modelName)
+                                    .textFieldStyle(.roundedBorder)
+                                    .help("Название модели в вашем OpenWebUI")
+                            }
                         }
+                        .padding()
                     }
-                    .disabled(apiUrl.isEmpty || apiToken.isEmpty || modelName.isEmpty || isTestingConnection)
-                }
-                
-                Section(header: Text("ℹ️ Информация")) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Как получить настройки:")
-                            .font(.headline)
-                        Text("1. Откройте ваш OpenWebUI")
-                        Text("2. Перейдите в Settings → Account → API Keys")
-                        Text("3. Создайте новый API ключ")
-                        Text("4. URL обычно выглядит как: https://your-domain.com/v1")
+                    
+                    // Параметры генерации
+                    GroupBox(label: Label("⚙️ Параметры генерации", systemImage: "slider.horizontal.3")) {
+                        VStack(alignment: .leading, spacing: 12) {
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    Text("Temperature:")
+                                        .font(.headline)
+                                    Spacer()
+                                    Text(String(format: "%.1f", temperature))
+                                        .font(.system(.body, design: .monospaced))
+                                        .foregroundColor(.blue)
+                                }
+                                Slider(value: $temperature, in: 0.0...1.0, step: 0.1)
+                                Text("Контролирует креативность перевода (0.0 - точный, 1.0 - творческий)")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    Text("Max Tokens:")
+                                        .font(.headline)
+                                    Spacer()
+                                    Text("\(maxTokens)")
+                                        .font(.system(.body, design: .monospaced))
+                                        .foregroundColor(.blue)
+                                }
+                                Slider(value: Binding(
+                                    get: { Double(maxTokens) },
+                                    set: { maxTokens = Int($0) }
+                                ), in: 256...4096, step: 256)
+                                Text("Максимальная длина ответа")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            // ДОБАВЛЕНО: кнопка сброса к значениям по умолчанию
+                            Button("Сбросить к значениям по умолчанию") {
+                                temperature = 0.3
+                                maxTokens = 1024
+                            }
+                            .font(.caption)
+                            .buttonStyle(LinkButtonStyle())
+                        }
+                        .padding()
                     }
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                    
+                    // Тестирование
+                    GroupBox(label: Label("🧪 Тестирование", systemImage: "testtube.2")) {
+                        VStack(spacing: 12) {
+                            Button(action: testConnection) {
+                                HStack {
+                                    if isTestingConnection {
+                                        ProgressView()
+                                            .scaleEffect(0.8)
+                                            .progressViewStyle(CircularProgressViewStyle())
+                                    } else {
+                                        Image(systemName: "network")
+                                    }
+                                    Text(isTestingConnection ? "Тестируем подключение..." : "Тест подключения")
+                                }
+                                .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(apiUrl.isEmpty || apiToken.isEmpty || modelName.isEmpty || isTestingConnection)
+                            
+                            if !testResult.isEmpty {
+                                Text(testResult)
+                                    .font(.caption)
+                                    .foregroundColor(testResult.contains("✅") ? .green : .red)
+                                    .multilineTextAlignment(.center)
+                            }
+                        }
+                        .padding()
+                    }
+                    
+                    // Информация
+                    DisclosureGroup("ℹ️ Как получить настройки", isExpanded: $showAdvancedSettings) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Для получения API ключа:")
+                                .font(.headline)
+                            
+                            ForEach(Array(instructionSteps.enumerated()), id: \.offset) { index, step in
+                                HStack(alignment: .top, spacing: 8) {
+                                    Text("\(index + 1).")
+                                        .font(.system(.caption, design: .monospaced))
+                                        .foregroundColor(.blue)
+                                    Text(step)
+                                        .font(.caption)
+                                }
+                            }
+                            
+                            Divider()
+                            
+                            Text("Примеры URL:")
+                                .font(.headline)
+                            Text("• https://your-domain.com/v1")
+                                .font(.system(.caption, design: .monospaced))
+                            Text("• http://localhost:3000/v1")
+                                .font(.system(.caption, design: .monospaced))
+                        }
+                        .padding()
+                    }
+                    .padding(.horizontal)
                 }
+                .padding()
             }
-            .padding()
-            .frame(width: 500, height: 600)
-            .navigationTitle("Настройки")
+            .frame(width: 600, height: 700)
+            .navigationTitle("Настройки AI Переводчика")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Отмена") {
                         loadSettings()
-                        dismiss()
+                        onClose?() ?? dismiss()
                     }
                 }
                 
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Сохранить") {
                         saveSettings()
-                        dismiss()
+                        onClose?() ?? dismiss()
                     }
                     .disabled(apiUrl.isEmpty || apiToken.isEmpty || modelName.isEmpty)
+                    .keyboardShortcut(.defaultAction)
                 }
             }
         }
         .onAppear {
             loadSettings()
         }
-        .alert("Результат теста", isPresented: $showingTestResult) {
-            Button("OK") { }
-        } message: {
-            Text(testResult)
-        }
     }
+    
+    private let instructionSteps = [
+        "Откройте ваш OpenWebUI",
+        "Перейдите в Settings → Account → API Keys",
+        "Нажмите 'Create new API key'",
+        "Скопируйте созданный ключ",
+        "URL обычно имеет вид: https://your-domain.com/v1"
+    ]
     
     private func loadSettings() {
         apiUrl = settingsManager.apiUrl
@@ -883,6 +1322,7 @@ struct SettingsView: View {
     
     private func testConnection() {
         isTestingConnection = true
+        testResult = ""
         
         let tempSettings = SettingsManager()
         tempSettings.apiUrl = apiUrl
@@ -903,14 +1343,12 @@ struct SettingsView: View {
                 )
                 
                 await MainActor.run {
-                    testResult = "✅ Подключение успешно!\n\nТестовый перевод:\n\(result)"
-                    showingTestResult = true
+                    testResult = "✅ Подключение успешно!\nТестовый перевод: \(result)"
                     isTestingConnection = false
                 }
             } catch {
                 await MainActor.run {
-                    testResult = "❌ Ошибка подключения:\n\(error.localizedDescription)"
-                    showingTestResult = true
+                    testResult = "❌ Ошибка: \(error.localizedDescription)"
                     isTestingConnection = false
                 }
             }
@@ -923,6 +1361,15 @@ import Foundation
 
 class TranslationService: ObservableObject {
     private var settingsManager: SettingsManager?
+    private let session: URLSession
+    
+    init() {
+        // УЛУЧШЕНО: настраиваем URLSession с таймаутом
+        let configuration = URLSessionConfiguration.default
+        configuration.timeoutIntervalForRequest = 30
+        configuration.timeoutIntervalForResource = 60
+        self.session = URLSession(configuration: configuration)
+    }
     
     func configure(with settings: SettingsManager) {
         self.settingsManager = settings
@@ -935,13 +1382,28 @@ class TranslationService: ObservableObject {
         
         let prompt = createTranslationPrompt(text: text, from: sourceLanguage, to: targetLanguage)
         
-        guard let url = URL(string: "\(settings.apiUrl)/chat/completions") else {
+        // УЛУЧШЕНО: более гибкая обработка URL
+        var urlString = settings.apiUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !urlString.hasSuffix("/") {
+            urlString += "/"
+        }
+        if !urlString.hasSuffix("chat/completions") && !urlString.hasSuffix("v1/") {
+            urlString += "chat/completions"
+        } else if urlString.hasSuffix("v1/") {
+            urlString += "chat/completions"
+        }
+        
+        guard let url = URL(string: urlString) else {
             throw TranslationError.invalidURL
         }
         
         let requestBody: [String: Any] = [
             "model": settings.modelName,
             "messages": [
+                [
+                    "role": "system",
+                    "content": "You are a professional translator. Translate accurately while preserving the tone and style of the original text."
+                ],
                 [
                     "role": "user",
                     "content": prompt
@@ -964,19 +1426,23 @@ class TranslationService: ObservableObject {
         }
         
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await session.data(for: request)
             
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw TranslationError.networkError
             }
             
+            // УЛУЧШЕНО: более подробная обработка ошибок
             if httpResponse.statusCode != 200 {
-                if let errorData = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                   let detail = errorData["detail"] as? String {
-                    throw TranslationError.apiError(detail)
-                } else {
-                    throw TranslationError.httpError(httpResponse.statusCode)
+                if let errorData = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    if let detail = errorData["detail"] as? String {
+                        throw TranslationError.apiError(detail)
+                    } else if let error = errorData["error"] as? [String: Any],
+                              let message = error["message"] as? String {
+                        throw TranslationError.apiError(message)
+                    }
                 }
+                throw TranslationError.httpError(httpResponse.statusCode)
             }
             
             guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -1013,7 +1479,9 @@ class TranslationService: ObservableObject {
             "pt": "португальский",
             "ar": "арабский",
             "hi": "хинди",
-            "tr": "турецкий"
+            "tr": "турецкий",
+            "uk": "украинский",
+            "pl": "польский"
         ]
         
         let sourceName = languageNames[sourceLanguage] ?? sourceLanguage
@@ -1025,7 +1493,8 @@ class TranslationService: ObservableObject {
         
         return """
         \(sourceInstruction) на \(targetName) следующий текст. 
-        Сохрани стиль и тон оригинала. Верни только переведённый текст без дополнительных пояснений.
+        Сохрани стиль, тон и форматирование оригинала. 
+        Верни только переведённый текст без дополнительных пояснений или комментариев.
         
         Текст для перевода:
         \(text)
@@ -1073,6 +1542,16 @@ class SettingsManager: ObservableObject {
         userDefaults.set(temperature, forKey: "temperature")
         userDefaults.set(maxTokens, forKey: "maxTokens")
     }
+    
+    // ДОБАВЛЕНО: метод для сброса настроек
+    func resetToDefaults() {
+        apiUrl = ""
+        apiToken = ""
+        modelName = ""
+        temperature = 0.3
+        maxTokens = 1024
+        saveSettings()
+    }
 }
 
 // MARK: - TranslationError.swift (Обработка ошибок)
@@ -1098,11 +1577,37 @@ enum TranslationError: LocalizedError {
         case .networkError:
             return "Ошибка сети. Проверьте интернет соединение."
         case .httpError(let code):
-            return "HTTP ошибка: \(code). Проверьте настройки API."
+            return "HTTP ошибка: \(code). \(httpErrorDescription(code))"
         case .apiError(let message):
             return "Ошибка API: \(message)"
         case .invalidResponse:
             return "Неверный формат ответа от сервера."
         }
+    }
+    
+    private func httpErrorDescription(_ code: Int) -> String {
+        switch code {
+        case 401:
+            return "Неверный API токен."
+        case 403:
+            return "Доступ запрещен. Проверьте права доступа."
+        case 404:
+            return "API endpoint не найден. Проверьте URL."
+        case 429:
+            return "Слишком много запросов. Попробуйте позже."
+        case 500...599:
+            return "Ошибка сервера. Попробуйте позже."
+        default:
+            return "Проверьте настройки API."
+        }
+    }
+}
+
+// MARK: - Custom Button Styles
+struct LinkButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundColor(configuration.isPressed ? .blue.opacity(0.7) : .blue)
+            .underline()
     }
 }
