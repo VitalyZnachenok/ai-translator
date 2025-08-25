@@ -272,7 +272,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         closePopover() // Закрываем popover при открытии настроек
         
         let newWindow = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 600, height: 700),
+            contentRect: NSRect(x: 0, y: 0, width: 650, height: 750),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false
@@ -319,6 +319,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         • Интеграция с любыми AI моделями
         • Работа из меню-бара
         • Быстрый доступ и компактный интерфейс
+        • Кастомные промпты для разных стилей перевода
         
         Горячие клавиши:
         • Cmd+O - открыть переводчик
@@ -392,10 +393,11 @@ struct ContentView: View {
     @State private var showingSettings = false
     @State private var selectedSourceLanguage = "auto"
     @State private var selectedTargetLanguage = "ru"
+    @State private var selectedPromptId = "default" // ДОБАВЛЕНО: выбранный промпт
     @State private var errorMessage = ""
     @State private var showingError = false
-    @State private var copyFeedback = false // ДОБАВЛЕНО: обратная связь при копировании
-    @State private var keyEventMonitor: Any? // ДОБАВЛЕНО: для отслеживания Cmd+Enter
+    @State private var copyFeedback = false
+    @State private var keyEventMonitor: Any?
     
     let languages = [
         ("auto", "🌐 Авто-определение"),
@@ -412,8 +414,8 @@ struct ContentView: View {
         ("ar", "🇸🇦 العربية"),
         ("hi", "🇮🇳 हिन्दी"),
         ("tr", "🇹🇷 Türkçe"),
-        ("uk", "🇺🇦 Українська"), // ДОБАВЛЕНО: украинский
-        ("pl", "🇵🇱 Polski") // ДОБАВЛЕНО: польский
+        ("uk", "🇺🇦 Українська"),
+        ("pl", "🇵🇱 Polski")
     ]
     
     init(settingsManager: SettingsManager) {
@@ -433,7 +435,7 @@ struct ContentView: View {
                 
                 Spacer()
                 
-                // ДОБАВЛЕНО: индикатор статуса подключения
+                // Индикатор статуса подключения
                 HStack(spacing: 4) {
                     Circle()
                         .fill(settingsManager.isConfigured ? Color.green : Color.red)
@@ -494,6 +496,36 @@ struct ContentView: View {
             }
             .padding(.horizontal)
             
+            // ДОБАВЛЕНО: Выбор стиля перевода
+            HStack {
+                VStack(alignment: .leading) {
+                    Text("Стиль перевода:")
+                        .font(.headline)
+                        .foregroundColor(.secondary)
+                    
+                    Picker("Стиль", selection: $selectedPromptId) {
+                        Text("🎯 Стандартный").tag("default")
+                        ForEach(settingsManager.customPrompts) { prompt in
+                            Text(prompt.icon + " " + prompt.name).tag(prompt.id)
+                        }
+                    }
+                    .pickerStyle(MenuPickerStyle())
+                    .frame(minWidth: 200)
+                }
+                
+                Spacer()
+                
+                // Подсказка о текущем стиле
+                if let currentPrompt = settingsManager.customPrompts.first(where: { $0.id == selectedPromptId }) {
+                    Text(currentPrompt.description)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(2)
+                        .frame(maxWidth: 300)
+                }
+            }
+            .padding(.horizontal)
+            
             // Поле ввода
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
@@ -503,7 +535,6 @@ struct ContentView: View {
                     
                     Spacer()
                     
-                    // ДОБАВЛЕНО: кнопка очистки
                     if !inputText.isEmpty {
                         Button(action: { inputText = "" }) {
                             Image(systemName: "xmark.circle.fill")
@@ -567,13 +598,11 @@ struct ContentView: View {
                 .buttonStyle(PlainButtonStyle())
                 .help("Перевести текст (⌘↩)")
                 
-                // ДОБАВЛЕНО: подсказка о горячей клавише
                 Text("⌘↩")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .help("Нажмите Cmd+Enter для быстрого перевода")
                 
-                // ДОБАВЛЕНО: кнопка вставки из буфера
                 Button(action: pasteFromClipboard) {
                     HStack {
                         Image(systemName: "doc.on.clipboard")
@@ -608,7 +637,6 @@ struct ContentView: View {
                             .buttonStyle(PlainButtonStyle())
                             .help("Копировать перевод в буфер обмена")
                             
-                            // ДОБАВЛЕНО: кнопка очистки результата
                             Button(action: { outputText = "" }) {
                                 Image(systemName: "trash")
                                     .foregroundColor(.gray)
@@ -629,7 +657,7 @@ struct ContentView: View {
                         .cornerRadius(8)
                         .textSelection(.enabled)
                 }
-                .frame(minHeight: 120, maxHeight: 300)
+                .frame(minHeight: 120, maxHeight: 250)
             }
             .padding(.horizontal)
             
@@ -674,17 +702,15 @@ struct ContentView: View {
         }
     }
     
-    // ДОБАВЛЕНО: настройка горячих клавиш
     private func setupKeyboardShortcuts() {
         keyEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            // Проверяем Cmd+Enter для отправки перевода
             if event.modifierFlags.contains(.command) &&
-               event.keyCode == 36 && // 36 = Return/Enter
+               event.keyCode == 36 &&
                !self.inputText.isEmpty &&
                !self.isTranslating &&
                self.settingsManager.isConfigured {
                 self.translateText()
-                return nil // Перехватываем событие
+                return nil
             }
             return event
         }
@@ -703,7 +729,6 @@ struct ContentView: View {
         selectedSourceLanguage = selectedTargetLanguage
         selectedTargetLanguage = temp
         
-        // Также меняем местами тексты
         let tempText = inputText
         inputText = outputText
         outputText = tempText
@@ -716,12 +741,16 @@ struct ContentView: View {
         outputText = ""
         errorMessage = ""
         
+        // Получаем выбранный промпт
+        let customPrompt = settingsManager.customPrompts.first(where: { $0.id == selectedPromptId })
+        
         Task {
             do {
                 let result = try await translationService.translate(
                     text: inputText,
                     from: selectedSourceLanguage,
-                    to: selectedTargetLanguage
+                    to: selectedTargetLanguage,
+                    customPrompt: customPrompt
                 )
                 
                 await MainActor.run {
@@ -743,12 +772,10 @@ struct ContentView: View {
         pasteboard.clearContents()
         pasteboard.setString(outputText, forType: .string)
         
-        // Показываем обратную связь
         withAnimation(.easeInOut(duration: 0.2)) {
             copyFeedback = true
         }
         
-        // Убираем обратную связь через 2 секунды
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
             withAnimation(.easeInOut(duration: 0.2)) {
                 copyFeedback = false
@@ -756,7 +783,6 @@ struct ContentView: View {
         }
     }
     
-    // ДОБАВЛЕНО: вставка из буфера
     private func pasteFromClipboard() {
         if let string = NSPasteboard.general.string(forType: .string) {
             inputText = string
@@ -774,10 +800,11 @@ struct CompactContentView: View {
     @State private var isTranslating = false
     @State private var selectedSourceLanguage = "auto"
     @State private var selectedTargetLanguage = "ru"
+    @State private var selectedPromptId = "default" // ДОБАВЛЕНО
     @State private var errorMessage = ""
     @State private var showingError = false
-    @State private var copyFeedback = false // ДОБАВЛЕНО
-    @State private var keyEventMonitor: Any? // ДОБАВЛЕНО: для отслеживания Cmd+Enter
+    @State private var copyFeedback = false
+    @State private var keyEventMonitor: Any?
     
     let languages = [
         ("auto", "🌐 Авто"),
@@ -794,8 +821,8 @@ struct CompactContentView: View {
         ("ar", "🇸🇦 AR"),
         ("hi", "🇮🇳 HI"),
         ("tr", "🇹🇷 TR"),
-        ("uk", "🇺🇦 UA"), // ДОБАВЛЕНО
-        ("pl", "🇵🇱 PL") // ДОБАВЛЕНО
+        ("uk", "🇺🇦 UA"),
+        ("pl", "🇵🇱 PL")
     ]
     
     init(settingsManager: SettingsManager) {
@@ -814,12 +841,10 @@ struct CompactContentView: View {
                 
                 Spacer()
                 
-                // Индикатор статуса
                 Circle()
                     .fill(settingsManager.isConfigured ? Color.green : Color.red)
                     .frame(width: 6, height: 6)
                 
-                // Кнопка полной версии
                 Button(action: {
                     if let appDelegate = NSApp.delegate as? AppDelegate {
                         appDelegate.showMainWindow()
@@ -833,7 +858,7 @@ struct CompactContentView: View {
             }
             .padding(.horizontal)
             
-            // ИСПРАВЛЕНО: Увеличена ширина дропбоксов для выбора языков
+            // Выбор языков
             HStack(spacing: 8) {
                 Picker("От", selection: $selectedSourceLanguage) {
                     ForEach(languages, id: \.0) { code, name in
@@ -841,7 +866,7 @@ struct CompactContentView: View {
                     }
                 }
                 .pickerStyle(MenuPickerStyle())
-                .frame(width: 120) // ИЗМЕНЕНО: было 80, теперь 120
+                .frame(width: 120)
                 
                 Button(action: swapLanguages) {
                     Image(systemName: "arrow.left.arrow.right")
@@ -857,11 +882,10 @@ struct CompactContentView: View {
                     }
                 }
                 .pickerStyle(MenuPickerStyle())
-                .frame(width: 120) // ИЗМЕНЕНО: было 80, теперь 120
+                .frame(width: 120)
                 
                 Spacer()
                 
-                // Кнопка вставки
                 Button(action: pasteFromClipboard) {
                     Image(systemName: "doc.on.clipboard")
                         .font(.caption)
@@ -871,7 +895,24 @@ struct CompactContentView: View {
             }
             .padding(.horizontal)
             
-            // Поле ввода (компактное)
+            // ДОБАВЛЕНО: Выбор стиля (компактный)
+            if !settingsManager.customPrompts.isEmpty {
+                HStack {
+                    Picker("Стиль", selection: $selectedPromptId) {
+                        Text("🎯").tag("default")
+                            .help("Стандартный стиль")
+                        ForEach(settingsManager.customPrompts) { prompt in
+                            Text(prompt.icon).tag(prompt.id)
+                                .help(prompt.name)
+                        }
+                    }
+                    .pickerStyle(SegmentedPickerStyle())
+                    .frame(maxWidth: .infinity)
+                }
+                .padding(.horizontal)
+            }
+            
+            // Поле ввода
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
                     Text("Текст:")
@@ -934,7 +975,7 @@ struct CompactContentView: View {
             .buttonStyle(PlainButtonStyle())
             .help("Перевести текст (⌘↩)")
             
-            // Результат (компактный)
+            // Результат
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
                     Text("Результат:")
@@ -1012,17 +1053,15 @@ struct CompactContentView: View {
         }
     }
     
-    // ДОБАВЛЕНО: настройка горячих клавиш
     private func setupKeyboardShortcuts() {
         keyEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            // Проверяем Cmd+Enter для отправки перевода
             if event.modifierFlags.contains(.command) &&
-               event.keyCode == 36 && // 36 = Return/Enter
+               event.keyCode == 36 &&
                !self.inputText.isEmpty &&
                !self.isTranslating &&
                self.settingsManager.isConfigured {
                 self.translateText()
-                return nil // Перехватываем событие
+                return nil
             }
             return event
         }
@@ -1052,12 +1091,15 @@ struct CompactContentView: View {
         isTranslating = true
         outputText = ""
         
+        let customPrompt = settingsManager.customPrompts.first(where: { $0.id == selectedPromptId })
+        
         Task {
             do {
                 let result = try await translationService.translate(
                     text: inputText,
                     from: selectedSourceLanguage,
-                    to: selectedTargetLanguage
+                    to: selectedTargetLanguage,
+                    customPrompt: customPrompt
                 )
                 
                 await MainActor.run {
@@ -1079,7 +1121,6 @@ struct CompactContentView: View {
         pasteboard.clearContents()
         pasteboard.setString(outputText, forType: .string)
         
-        // Обратная связь
         withAnimation(.easeInOut(duration: 0.2)) {
             copyFeedback = true
         }
@@ -1104,7 +1145,7 @@ import SwiftUI
 struct SettingsView: View {
     @ObservedObject var settingsManager: SettingsManager
     @Environment(\.dismiss) private var dismiss
-    let onClose: (() -> Void)? // ДОБАВЛЕНО: замыкание для закрытия
+    let onClose: (() -> Void)?
     
     @State private var apiUrl = ""
     @State private var apiToken = ""
@@ -1114,7 +1155,13 @@ struct SettingsView: View {
     @State private var isTestingConnection = false
     @State private var testResult = ""
     @State private var showingTestResult = false
-    @State private var showAdvancedSettings = false // ДОБАВЛЕНО: расширенные настройки
+    @State private var showAdvancedSettings = false
+    @State private var selectedTab = 0 // ДОБАВЛЕНО: вкладки
+    
+    // ДОБАВЛЕНО: для управления промптами
+    @State private var customPrompts: [TranslationPrompt] = []
+    @State private var showingAddPrompt = false
+    @State private var editingPrompt: TranslationPrompt?
     
     init(settingsManager: SettingsManager, onClose: (() -> Void)? = nil) {
         self.settingsManager = settingsManager
@@ -1123,154 +1170,32 @@ struct SettingsView: View {
     
     var body: some View {
         NavigationView {
-            ScrollView {
-                VStack(spacing: 20) {
-                    // Основные настройки
-                    GroupBox(label: Label("🔗 Подключение к OpenWebUI", systemImage: "network")) {
-                        VStack(alignment: .leading, spacing: 12) {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("URL API:")
-                                    .font(.headline)
-                                TextField("https://your-openwebui.com/v1", text: $apiUrl)
-                                    .textFieldStyle(.roundedBorder)
-                                    .help("Базовый URL вашего OpenWebUI API")
-                            }
-                            
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("API Token:")
-                                    .font(.headline)
-                                HStack {
-                                    SecureField("Ваш API токен", text: $apiToken)
-                                        .textFieldStyle(.roundedBorder)
-                                    
-                                    // ДОБАВЛЕНО: кнопка показа/скрытия токена
-                                    Button(action: {}) {
-                                        Image(systemName: "eye.slash")
-                                    }
-                                    .buttonStyle(PlainButtonStyle())
-                                    .disabled(true) // TODO: реализовать переключение видимости
-                                }
-                            }
-                            
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("Модель для перевода:")
-                                    .font(.headline)
-                                TextField("gpt-4, claude-3-sonnet, llama2 и т.д.", text: $modelName)
-                                    .textFieldStyle(.roundedBorder)
-                                    .help("Название модели в вашем OpenWebUI")
-                            }
-                        }
-                        .padding()
+            TabView(selection: $selectedTab) {
+                // Вкладка подключения
+                ScrollView {
+                    VStack(spacing: 20) {
+                        connectionSettings
+                        generationSettings
+                        testingSection
+                        helpSection
                     }
-                    
-                    // Параметры генерации
-                    GroupBox(label: Label("⚙️ Параметры генерации", systemImage: "slider.horizontal.3")) {
-                        VStack(alignment: .leading, spacing: 12) {
-                            VStack(alignment: .leading, spacing: 8) {
-                                HStack {
-                                    Text("Temperature:")
-                                        .font(.headline)
-                                    Spacer()
-                                    Text(String(format: "%.1f", temperature))
-                                        .font(.system(.body, design: .monospaced))
-                                        .foregroundColor(.blue)
-                                }
-                                Slider(value: $temperature, in: 0.0...1.0, step: 0.1)
-                                Text("Контролирует креативность перевода (0.0 - точный, 1.0 - творческий)")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                            
-                            VStack(alignment: .leading, spacing: 8) {
-                                HStack {
-                                    Text("Max Tokens:")
-                                        .font(.headline)
-                                    Spacer()
-                                    Text("\(maxTokens)")
-                                        .font(.system(.body, design: .monospaced))
-                                        .foregroundColor(.blue)
-                                }
-                                Slider(value: Binding(
-                                    get: { Double(maxTokens) },
-                                    set: { maxTokens = Int($0) }
-                                ), in: 256...4096, step: 256)
-                                Text("Максимальная длина ответа")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                            
-                            // ДОБАВЛЕНО: кнопка сброса к значениям по умолчанию
-                            Button("Сбросить к значениям по умолчанию") {
-                                temperature = 0.3
-                                maxTokens = 1024
-                            }
-                            .font(.caption)
-                            .buttonStyle(LinkButtonStyle())
-                        }
-                        .padding()
-                    }
-                    
-                    // Тестирование
-                    GroupBox(label: Label("🧪 Тестирование", systemImage: "testtube.2")) {
-                        VStack(spacing: 12) {
-                            Button(action: testConnection) {
-                                HStack {
-                                    if isTestingConnection {
-                                        ProgressView()
-                                            .scaleEffect(0.8)
-                                            .progressViewStyle(CircularProgressViewStyle())
-                                    } else {
-                                        Image(systemName: "network")
-                                    }
-                                    Text(isTestingConnection ? "Тестируем подключение..." : "Тест подключения")
-                                }
-                                .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(apiUrl.isEmpty || apiToken.isEmpty || modelName.isEmpty || isTestingConnection)
-                            
-                            if !testResult.isEmpty {
-                                Text(testResult)
-                                    .font(.caption)
-                                    .foregroundColor(testResult.contains("✅") ? .green : .red)
-                                    .multilineTextAlignment(.center)
-                            }
-                        }
-                        .padding()
-                    }
-                    
-                    // Информация
-                    DisclosureGroup("ℹ️ Как получить настройки", isExpanded: $showAdvancedSettings) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Для получения API ключа:")
-                                .font(.headline)
-                            
-                            ForEach(Array(instructionSteps.enumerated()), id: \.offset) { index, step in
-                                HStack(alignment: .top, spacing: 8) {
-                                    Text("\(index + 1).")
-                                        .font(.system(.caption, design: .monospaced))
-                                        .foregroundColor(.blue)
-                                    Text(step)
-                                        .font(.caption)
-                                }
-                            }
-                            
-                            Divider()
-                            
-                            Text("Примеры URL:")
-                                .font(.headline)
-                            Text("• https://your-domain.com/v1")
-                                .font(.system(.caption, design: .monospaced))
-                            Text("• http://localhost:3000/v1")
-                                .font(.system(.caption, design: .monospaced))
-                        }
-                        .padding()
-                    }
-                    .padding(.horizontal)
+                    .padding()
                 }
-                .padding()
+                .tabItem {
+                    Label("Подключение", systemImage: "network")
+                }
+                .tag(0)
+                
+                // ДОБАВЛЕНО: Вкладка промптов
+                VStack {
+                    promptsSettings
+                }
+                .tabItem {
+                    Label("Стили перевода", systemImage: "text.bubble")
+                }
+                .tag(1)
             }
-            .frame(width: 600, height: 700)
+            .frame(width: 650, height: 750)
             .navigationTitle("Настройки AI Переводчика")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -1293,6 +1218,234 @@ struct SettingsView: View {
         .onAppear {
             loadSettings()
         }
+        .sheet(isPresented: $showingAddPrompt) {
+            PromptEditView(prompt: nil) { newPrompt in
+                customPrompts.append(newPrompt)
+            }
+        }
+        .sheet(item: $editingPrompt) { prompt in
+            PromptEditView(prompt: prompt) { updatedPrompt in
+                if let index = customPrompts.firstIndex(where: { $0.id == prompt.id }) {
+                    customPrompts[index] = updatedPrompt
+                }
+            }
+        }
+    }
+    
+    private var connectionSettings: some View {
+        GroupBox(label: Label("🔗 Подключение к OpenWebUI", systemImage: "network")) {
+            VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("URL API:")
+                        .font(.headline)
+                    TextField("https://your-openwebui.com/v1", text: $apiUrl)
+                        .textFieldStyle(.roundedBorder)
+                        .help("Базовый URL вашего OpenWebUI API")
+                }
+                
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("API Token:")
+                        .font(.headline)
+                    SecureField("Ваш API токен", text: $apiToken)
+                        .textFieldStyle(.roundedBorder)
+                }
+                
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Модель для перевода:")
+                        .font(.headline)
+                    TextField("gpt-4, claude-3-sonnet, llama2 и т.д.", text: $modelName)
+                        .textFieldStyle(.roundedBorder)
+                        .help("Название модели в вашем OpenWebUI")
+                }
+            }
+            .padding()
+        }
+    }
+    
+    private var generationSettings: some View {
+        GroupBox(label: Label("⚙️ Параметры генерации", systemImage: "slider.horizontal.3")) {
+            VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Temperature:")
+                            .font(.headline)
+                        Spacer()
+                        Text(String(format: "%.1f", temperature))
+                            .font(.system(.body, design: .monospaced))
+                            .foregroundColor(.blue)
+                    }
+                    Slider(value: $temperature, in: 0.0...1.0, step: 0.1)
+                    Text("Контролирует креативность перевода (0.0 - точный, 1.0 - творческий)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Max Tokens:")
+                            .font(.headline)
+                        Spacer()
+                        Text("\(maxTokens)")
+                            .font(.system(.body, design: .monospaced))
+                            .foregroundColor(.blue)
+                    }
+                    Slider(value: Binding(
+                        get: { Double(maxTokens) },
+                        set: { maxTokens = Int($0) }
+                    ), in: 256...4096, step: 256)
+                    Text("Максимальная длина ответа")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                
+                Button("Сбросить к значениям по умолчанию") {
+                    temperature = 0.3
+                    maxTokens = 1024
+                }
+                .font(.caption)
+                .buttonStyle(LinkButtonStyle())
+            }
+            .padding()
+        }
+    }
+    
+    private var testingSection: some View {
+        GroupBox(label: Label("🧪 Тестирование", systemImage: "testtube.2")) {
+            VStack(spacing: 12) {
+                Button(action: testConnection) {
+                    HStack {
+                        if isTestingConnection {
+                            ProgressView()
+                                .scaleEffect(0.8)
+                                .progressViewStyle(CircularProgressViewStyle())
+                        } else {
+                            Image(systemName: "network")
+                        }
+                        Text(isTestingConnection ? "Тестируем подключение..." : "Тест подключения")
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(apiUrl.isEmpty || apiToken.isEmpty || modelName.isEmpty || isTestingConnection)
+                
+                if !testResult.isEmpty {
+                    Text(testResult)
+                        .font(.caption)
+                        .foregroundColor(testResult.contains("✅") ? .green : .red)
+                        .multilineTextAlignment(.center)
+                }
+            }
+            .padding()
+        }
+    }
+    
+    private var helpSection: some View {
+        DisclosureGroup("ℹ️ Как получить настройки", isExpanded: $showAdvancedSettings) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Для получения API ключа:")
+                    .font(.headline)
+                
+                ForEach(Array(instructionSteps.enumerated()), id: \.offset) { index, step in
+                    HStack(alignment: .top, spacing: 8) {
+                        Text("\(index + 1).")
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundColor(.blue)
+                        Text(step)
+                            .font(.caption)
+                    }
+                }
+                
+                Divider()
+                
+                Text("Примеры URL:")
+                    .font(.headline)
+                Text("• https://your-domain.com/v1")
+                    .font(.system(.caption, design: .monospaced))
+                Text("• http://localhost:3000/v1")
+                    .font(.system(.caption, design: .monospaced))
+            }
+            .padding()
+        }
+        .padding(.horizontal)
+    }
+    
+    // ДОБАВЛЕНО: Интерфейс для управления промптами
+    private var promptsSettings: some View {
+        VStack(spacing: 16) {
+            HStack {
+                Text("Настройка стилей перевода")
+                    .font(.title2)
+                    .fontWeight(.bold)
+                
+                Spacer()
+                
+                Button(action: { showingAddPrompt = true }) {
+                    HStack {
+                        Image(systemName: "plus.circle.fill")
+                        Text("Добавить стиль")
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            .padding()
+            
+            if customPrompts.isEmpty {
+                VStack(spacing: 20) {
+                    Image(systemName: "text.bubble")
+                        .font(.system(size: 50))
+                        .foregroundColor(.secondary)
+                    
+                    Text("Нет настроенных стилей")
+                        .font(.title3)
+                        .foregroundColor(.secondary)
+                    
+                    Text("Добавьте свои стили перевода для разных случаев:\nпростой язык, технический перевод, литературный стиль и т.д.")
+                        .multilineTextAlignment(.center)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    
+                    Button(action: addDefaultPrompts) {
+                        Label("Добавить примеры стилей", systemImage: "sparkles")
+                    }
+                    .buttonStyle(.bordered)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding()
+            } else {
+                List {
+                    ForEach(customPrompts) { prompt in
+                        HStack {
+                            Text(prompt.icon)
+                                .font(.title2)
+                            
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(prompt.name)
+                                    .font(.headline)
+                                Text(prompt.description)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(2)
+                            }
+                            
+                            Spacer()
+                            
+                            Button(action: { editingPrompt = prompt }) {
+                                Image(systemName: "pencil.circle")
+                                    .foregroundColor(.blue)
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                            
+                            Button(action: { deletePrompt(prompt) }) {
+                                Image(systemName: "trash.circle")
+                                    .foregroundColor(.red)
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                        }
+                        .padding(.vertical, 8)
+                    }
+                }
+            }
+        }
     }
     
     private let instructionSteps = [
@@ -1309,6 +1462,7 @@ struct SettingsView: View {
         modelName = settingsManager.modelName
         temperature = settingsManager.temperature
         maxTokens = settingsManager.maxTokens
+        customPrompts = settingsManager.customPrompts
     }
     
     private func saveSettings() {
@@ -1317,7 +1471,45 @@ struct SettingsView: View {
         settingsManager.modelName = modelName.trimmingCharacters(in: .whitespacesAndNewlines)
         settingsManager.temperature = temperature
         settingsManager.maxTokens = maxTokens
+        settingsManager.customPrompts = customPrompts
         settingsManager.saveSettings()
+    }
+    
+    private func deletePrompt(_ prompt: TranslationPrompt) {
+        customPrompts.removeAll { $0.id == prompt.id }
+    }
+    
+    private func addDefaultPrompts() {
+        customPrompts = [
+            TranslationPrompt(
+                name: "Простой язык",
+                description: "Использует простые слова и короткие предложения",
+                icon: "💬",
+                systemPrompt: "Переводи текст, используя максимально простой и понятный язык. Избегай сложных терминов и длинных предложений. Делай текст доступным для широкой аудитории.",
+                userPromptAddition: "Используй простые слова и короткие предложения."
+            ),
+            TranslationPrompt(
+                name: "Технический",
+                description: "Точный перевод технических терминов",
+                icon: "⚙️",
+                systemPrompt: "Ты технический переводчик. Сохраняй точность технических терминов и специальной терминологии. Не упрощай технические концепции.",
+                userPromptAddition: "Сохрани все технические термины точными."
+            ),
+            TranslationPrompt(
+                name: "Литературный",
+                description: "Художественный и выразительный перевод",
+                icon: "📚",
+                systemPrompt: "Ты литературный переводчик. Создавай красивый, выразительный перевод с сохранением стилистики и эмоциональной окраски оригинала.",
+                userPromptAddition: "Сделай перевод литературным и выразительным."
+            ),
+            TranslationPrompt(
+                name: "Деловой",
+                description: "Формальный и профессиональный стиль",
+                icon: "💼",
+                systemPrompt: "Переводи в формальном деловом стиле. Используй профессиональную лексику и соблюдай деловой этикет.",
+                userPromptAddition: "Используй формальный деловой стиль."
+            )
+        ]
     }
     
     private func testConnection() {
@@ -1339,7 +1531,8 @@ struct SettingsView: View {
                 let result = try await testService.translate(
                     text: "Hello world",
                     from: "en",
-                    to: "ru"
+                    to: "ru",
+                    customPrompt: nil
                 )
                 
                 await MainActor.run {
@@ -1356,6 +1549,102 @@ struct SettingsView: View {
     }
 }
 
+// MARK: - PromptEditView (Редактор промптов)
+struct PromptEditView: View {
+    let prompt: TranslationPrompt?
+    let onSave: (TranslationPrompt) -> Void
+    
+    @State private var name = ""
+    @State private var description = ""
+    @State private var icon = "✨"
+    @State private var systemPrompt = ""
+    @State private var userPromptAddition = ""
+    @Environment(\.dismiss) private var dismiss
+    
+    private let availableIcons = ["✨", "💬", "📚", "⚙️", "💼", "🎯", "🔥", "💡", "🎨", "🚀", "📝", "🌟"]
+    
+    var body: some View {
+        VStack(spacing: 20) {
+            Text(prompt == nil ? "Новый стиль перевода" : "Редактировать стиль")
+                .font(.title2)
+                .fontWeight(.bold)
+            
+            Form {
+                Section("Основная информация") {
+                    HStack {
+                        Text("Иконка:")
+                        Picker("", selection: $icon) {
+                            ForEach(availableIcons, id: \.self) { emoji in
+                                Text(emoji).tag(emoji)
+                            }
+                        }
+                        .pickerStyle(SegmentedPickerStyle())
+                    }
+                    
+                    TextField("Название стиля", text: $name)
+                    TextField("Краткое описание", text: $description)
+                }
+                
+                Section("Настройки промпта") {
+                    VStack(alignment: .leading) {
+                        Text("Системный промпт:")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        TextEditor(text: $systemPrompt)
+                            .font(.system(size: 12))
+                            .frame(height: 80)
+                    }
+                    
+                    VStack(alignment: .leading) {
+                        Text("Дополнение к запросу пользователя:")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        TextEditor(text: $userPromptAddition)
+                            .font(.system(size: 12))
+                            .frame(height: 60)
+                    }
+                }
+            }
+            
+            HStack {
+                Button("Отмена") {
+                    dismiss()
+                }
+                .keyboardShortcut(.escape)
+                
+                Spacer()
+                
+                Button("Сохранить") {
+                    let newPrompt = TranslationPrompt(
+                        id: prompt?.id ?? UUID().uuidString,
+                        name: name,
+                        description: description,
+                        icon: icon,
+                        systemPrompt: systemPrompt,
+                        userPromptAddition: userPromptAddition
+                    )
+                    onSave(newPrompt)
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(name.isEmpty || systemPrompt.isEmpty)
+            }
+            .padding()
+        }
+        .padding()
+        .frame(width: 500, height: 400)
+        .onAppear {
+            if let prompt = prompt {
+                name = prompt.name
+                description = prompt.description
+                icon = prompt.icon
+                systemPrompt = prompt.systemPrompt
+                userPromptAddition = prompt.userPromptAddition
+            }
+        }
+    }
+}
+
 // MARK: - TranslationService.swift (Сервис перевода)
 import Foundation
 
@@ -1364,12 +1653,11 @@ class TranslationService: ObservableObject {
     private var session: URLSession
     
     init() {
-        // ИСПРАВЛЕНО: Увеличены таймауты для предотвращения ошибок при долгом простое
         let configuration = URLSessionConfiguration.default
-        configuration.timeoutIntervalForRequest = 60  // Увеличено с 30
-        configuration.timeoutIntervalForResource = 120  // Увеличено с 60
-        configuration.waitsForConnectivity = true  // ДОБАВЛЕНО: ждем восстановления соединения
-        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData  // ДОБАВЛЕНО: всегда новый запрос
+        configuration.timeoutIntervalForRequest = 60
+        configuration.timeoutIntervalForResource = 120
+        configuration.waitsForConnectivity = true
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         self.session = URLSession(configuration: configuration)
     }
     
@@ -1377,14 +1665,13 @@ class TranslationService: ObservableObject {
         self.settingsManager = settings
     }
     
-    func translate(text: String, from sourceLanguage: String, to targetLanguage: String) async throws -> String {
+    func translate(text: String, from sourceLanguage: String, to targetLanguage: String, customPrompt: TranslationPrompt? = nil) async throws -> String {
         guard let settings = settingsManager, settings.isConfigured else {
             throw TranslationError.notConfigured
         }
         
-        let prompt = createTranslationPrompt(text: text, from: sourceLanguage, to: targetLanguage)
+        let prompt = createTranslationPrompt(text: text, from: sourceLanguage, to: targetLanguage, customPrompt: customPrompt)
         
-        // УЛУЧШЕНО: более гибкая обработка URL
         var urlString = settings.apiUrl.trimmingCharacters(in: .whitespacesAndNewlines)
         if !urlString.hasSuffix("/") {
             urlString += "/"
@@ -1399,12 +1686,15 @@ class TranslationService: ObservableObject {
             throw TranslationError.invalidURL
         }
         
+        // ИЗМЕНЕНО: Используем кастомный системный промпт если есть
+        let systemMessage = customPrompt?.systemPrompt ?? "You are a professional translator. Translate accurately while preserving the tone and style of the original text."
+        
         let requestBody: [String: Any] = [
             "model": settings.modelName,
             "messages": [
                 [
                     "role": "system",
-                    "content": "You are a professional translator. Translate accurately while preserving the tone and style of the original text."
+                    "content": systemMessage
                 ],
                 [
                     "role": "user",
@@ -1420,7 +1710,7 @@ class TranslationService: ObservableObject {
         request.httpMethod = "POST"
         request.setValue("Bearer \(settings.apiToken)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("AI-Translator/1.0", forHTTPHeaderField: "User-Agent")  // ДОБАВЛЕНО: User-Agent
+        request.setValue("AI-Translator/1.0", forHTTPHeaderField: "User-Agent")
         
         do {
             request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
@@ -1428,9 +1718,8 @@ class TranslationService: ObservableObject {
             throw TranslationError.invalidRequest
         }
         
-        // ДОБАВЛЕНО: Механизм повторных попыток при ошибке сети
         var lastError: Error?
-        for attempt in 1...3 {  // Пробуем до 3 раз
+        for attempt in 1...3 {
             do {
                 let (data, response) = try await session.data(for: request)
                 
@@ -1438,7 +1727,6 @@ class TranslationService: ObservableObject {
                     throw TranslationError.networkError
                 }
                 
-                // УЛУЧШЕНО: более подробная обработка ошибок
                 if httpResponse.statusCode != 200 {
                     if let errorData = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                         if let detail = errorData["detail"] as? String {
@@ -1464,12 +1752,10 @@ class TranslationService: ObservableObject {
             } catch {
                 lastError = error
                 
-                // Если это не сетевая ошибка или последняя попытка - выбрасываем ошибку
                 if !(error is URLError) || attempt == 3 {
                     if error is TranslationError {
                         throw error
                     } else if let urlError = error as? URLError {
-                        // ДОБАВЛЕНО: Более понятные сообщения об ошибках сети
                         switch urlError.code {
                         case .timedOut:
                             throw TranslationError.networkTimeout
@@ -1483,15 +1769,14 @@ class TranslationService: ObservableObject {
                     }
                 }
                 
-                // Ждем перед следующей попыткой
-                try await Task.sleep(nanoseconds: UInt64(attempt * 1_000_000_000))  // 1, 2, 3 секунды
+                try await Task.sleep(nanoseconds: UInt64(attempt * 1_000_000_000))
             }
         }
         
         throw lastError ?? TranslationError.networkError
     }
     
-    private func createTranslationPrompt(text: String, from sourceLanguage: String, to targetLanguage: String) -> String {
+    private func createTranslationPrompt(text: String, from sourceLanguage: String, to targetLanguage: String, customPrompt: TranslationPrompt?) -> String {
         let languageNames: [String: String] = [
             "auto": "автоматически определить язык",
             "en": "английский",
@@ -1518,9 +1803,13 @@ class TranslationService: ObservableObject {
             ? "Автоматически определи исходный язык текста и"
             : "Переведи с языка \(sourceName)"
         
+        // ИЗМЕНЕНО: Добавляем кастомные инструкции если есть
+        let additionalInstructions = customPrompt?.userPromptAddition ?? ""
+        
         return """
         \(sourceInstruction) на \(targetName) следующий текст. 
         Сохрани стиль, тон и форматирование оригинала. 
+        \(additionalInstructions)
         Верни только переведённый текст без дополнительных пояснений или комментариев.
         
         Текст для перевода:
@@ -1533,12 +1822,23 @@ class TranslationService: ObservableObject {
 import Foundation
 import SwiftUI
 
+// ДОБАВЛЕНО: Модель для кастомных промптов
+struct TranslationPrompt: Identifiable, Codable {
+    var id: String = UUID().uuidString
+    var name: String
+    var description: String
+    var icon: String
+    var systemPrompt: String
+    var userPromptAddition: String
+}
+
 class SettingsManager: ObservableObject {
     @Published var apiUrl: String = ""
     @Published var apiToken: String = ""
     @Published var modelName: String = ""
     @Published var temperature: Double = 0.3
     @Published var maxTokens: Int = 1024
+    @Published var customPrompts: [TranslationPrompt] = [] // ДОБАВЛЕНО
     
     var isConfigured: Bool {
         !apiUrl.isEmpty && !apiToken.isEmpty && !modelName.isEmpty
@@ -1560,6 +1860,12 @@ class SettingsManager: ObservableObject {
         
         let savedMaxTokens = userDefaults.integer(forKey: "maxTokens")
         maxTokens = savedMaxTokens == 0 ? 1024 : savedMaxTokens
+        
+        // ДОБАВЛЕНО: Загрузка кастомных промптов
+        if let promptsData = userDefaults.data(forKey: "customPrompts"),
+           let decodedPrompts = try? JSONDecoder().decode([TranslationPrompt].self, from: promptsData) {
+            customPrompts = decodedPrompts
+        }
     }
     
     func saveSettings() {
@@ -1568,15 +1874,20 @@ class SettingsManager: ObservableObject {
         userDefaults.set(modelName, forKey: "modelName")
         userDefaults.set(temperature, forKey: "temperature")
         userDefaults.set(maxTokens, forKey: "maxTokens")
+        
+        // ДОБАВЛЕНО: Сохранение кастомных промптов
+        if let encodedPrompts = try? JSONEncoder().encode(customPrompts) {
+            userDefaults.set(encodedPrompts, forKey: "customPrompts")
+        }
     }
     
-    // ДОБАВЛЕНО: метод для сброса настроек
     func resetToDefaults() {
         apiUrl = ""
         apiToken = ""
         modelName = ""
         temperature = 0.3
         maxTokens = 1024
+        customPrompts = []
         saveSettings()
     }
 }
@@ -1589,8 +1900,8 @@ enum TranslationError: LocalizedError {
     case invalidURL
     case invalidRequest
     case networkError
-    case networkTimeout  // ДОБАВЛЕНО
-    case noInternetConnection  // ДОБАВЛЕНО
+    case networkTimeout
+    case noInternetConnection
     case httpError(Int)
     case apiError(String)
     case invalidResponse
@@ -1605,9 +1916,9 @@ enum TranslationError: LocalizedError {
             return "Ошибка формирования запроса."
         case .networkError:
             return "Ошибка сети. Проверьте интернет соединение и попробуйте снова."
-        case .networkTimeout:  // ДОБАВЛЕНО
+        case .networkTimeout:
             return "Превышено время ожидания ответа. Проверьте соединение и попробуйте снова."
-        case .noInternetConnection:  // ДОБАВЛЕНО
+        case .noInternetConnection:
             return "Нет подключения к интернету. Проверьте сетевые настройки."
         case .httpError(let code):
             return "HTTP ошибка: \(code). \(httpErrorDescription(code))"
