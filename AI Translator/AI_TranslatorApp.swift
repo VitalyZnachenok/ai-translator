@@ -833,7 +833,7 @@ struct CompactContentView: View {
             }
             .padding(.horizontal)
             
-            // Выбор языков (компактный)
+            // ИСПРАВЛЕНО: Увеличена ширина дропбоксов для выбора языков
             HStack(spacing: 8) {
                 Picker("От", selection: $selectedSourceLanguage) {
                     ForEach(languages, id: \.0) { code, name in
@@ -841,7 +841,7 @@ struct CompactContentView: View {
                     }
                 }
                 .pickerStyle(MenuPickerStyle())
-                .frame(width: 80)
+                .frame(width: 120) // ИЗМЕНЕНО: было 80, теперь 120
                 
                 Button(action: swapLanguages) {
                     Image(systemName: "arrow.left.arrow.right")
@@ -857,7 +857,7 @@ struct CompactContentView: View {
                     }
                 }
                 .pickerStyle(MenuPickerStyle())
-                .frame(width: 80)
+                .frame(width: 120) // ИЗМЕНЕНО: было 80, теперь 120
                 
                 Spacer()
                 
@@ -1361,13 +1361,15 @@ import Foundation
 
 class TranslationService: ObservableObject {
     private var settingsManager: SettingsManager?
-    private let session: URLSession
+    private var session: URLSession
     
     init() {
-        // УЛУЧШЕНО: настраиваем URLSession с таймаутом
+        // ИСПРАВЛЕНО: Увеличены таймауты для предотвращения ошибок при долгом простое
         let configuration = URLSessionConfiguration.default
-        configuration.timeoutIntervalForRequest = 30
-        configuration.timeoutIntervalForResource = 60
+        configuration.timeoutIntervalForRequest = 60  // Увеличено с 30
+        configuration.timeoutIntervalForResource = 120  // Увеличено с 60
+        configuration.waitsForConnectivity = true  // ДОБАВЛЕНО: ждем восстановления соединения
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData  // ДОБАВЛЕНО: всегда новый запрос
         self.session = URLSession(configuration: configuration)
     }
     
@@ -1418,6 +1420,7 @@ class TranslationService: ObservableObject {
         request.httpMethod = "POST"
         request.setValue("Bearer \(settings.apiToken)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("AI-Translator/1.0", forHTTPHeaderField: "User-Agent")  // ДОБАВЛЕНО: User-Agent
         
         do {
             request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
@@ -1425,43 +1428,67 @@ class TranslationService: ObservableObject {
             throw TranslationError.invalidRequest
         }
         
-        do {
-            let (data, response) = try await session.data(for: request)
-            
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw TranslationError.networkError
-            }
-            
-            // УЛУЧШЕНО: более подробная обработка ошибок
-            if httpResponse.statusCode != 200 {
-                if let errorData = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                    if let detail = errorData["detail"] as? String {
-                        throw TranslationError.apiError(detail)
-                    } else if let error = errorData["error"] as? [String: Any],
-                              let message = error["message"] as? String {
-                        throw TranslationError.apiError(message)
+        // ДОБАВЛЕНО: Механизм повторных попыток при ошибке сети
+        var lastError: Error?
+        for attempt in 1...3 {  // Пробуем до 3 раз
+            do {
+                let (data, response) = try await session.data(for: request)
+                
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    throw TranslationError.networkError
+                }
+                
+                // УЛУЧШЕНО: более подробная обработка ошибок
+                if httpResponse.statusCode != 200 {
+                    if let errorData = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                        if let detail = errorData["detail"] as? String {
+                            throw TranslationError.apiError(detail)
+                        } else if let error = errorData["error"] as? [String: Any],
+                                  let message = error["message"] as? String {
+                            throw TranslationError.apiError(message)
+                        }
+                    }
+                    throw TranslationError.httpError(httpResponse.statusCode)
+                }
+                
+                guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let choices = json["choices"] as? [[String: Any]],
+                      let firstChoice = choices.first,
+                      let message = firstChoice["message"] as? [String: Any],
+                      let content = message["content"] as? String else {
+                    throw TranslationError.invalidResponse
+                }
+                
+                return content.trimmingCharacters(in: .whitespacesAndNewlines)
+                
+            } catch {
+                lastError = error
+                
+                // Если это не сетевая ошибка или последняя попытка - выбрасываем ошибку
+                if !(error is URLError) || attempt == 3 {
+                    if error is TranslationError {
+                        throw error
+                    } else if let urlError = error as? URLError {
+                        // ДОБАВЛЕНО: Более понятные сообщения об ошибках сети
+                        switch urlError.code {
+                        case .timedOut:
+                            throw TranslationError.networkTimeout
+                        case .notConnectedToInternet:
+                            throw TranslationError.noInternetConnection
+                        default:
+                            throw TranslationError.networkError
+                        }
+                    } else {
+                        throw TranslationError.networkError
                     }
                 }
-                throw TranslationError.httpError(httpResponse.statusCode)
-            }
-            
-            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let choices = json["choices"] as? [[String: Any]],
-                  let firstChoice = choices.first,
-                  let message = firstChoice["message"] as? [String: Any],
-                  let content = message["content"] as? String else {
-                throw TranslationError.invalidResponse
-            }
-            
-            return content.trimmingCharacters(in: .whitespacesAndNewlines)
-            
-        } catch {
-            if error is TranslationError {
-                throw error
-            } else {
-                throw TranslationError.networkError
+                
+                // Ждем перед следующей попыткой
+                try await Task.sleep(nanoseconds: UInt64(attempt * 1_000_000_000))  // 1, 2, 3 секунды
             }
         }
+        
+        throw lastError ?? TranslationError.networkError
     }
     
     private func createTranslationPrompt(text: String, from sourceLanguage: String, to targetLanguage: String) -> String {
@@ -1562,6 +1589,8 @@ enum TranslationError: LocalizedError {
     case invalidURL
     case invalidRequest
     case networkError
+    case networkTimeout  // ДОБАВЛЕНО
+    case noInternetConnection  // ДОБАВЛЕНО
     case httpError(Int)
     case apiError(String)
     case invalidResponse
@@ -1575,7 +1604,11 @@ enum TranslationError: LocalizedError {
         case .invalidRequest:
             return "Ошибка формирования запроса."
         case .networkError:
-            return "Ошибка сети. Проверьте интернет соединение."
+            return "Ошибка сети. Проверьте интернет соединение и попробуйте снова."
+        case .networkTimeout:  // ДОБАВЛЕНО
+            return "Превышено время ожидания ответа. Проверьте соединение и попробуйте снова."
+        case .noInternetConnection:  // ДОБАВЛЕНО
+            return "Нет подключения к интернету. Проверьте сетевые настройки."
         case .httpError(let code):
             return "HTTP ошибка: \(code). \(httpErrorDescription(code))"
         case .apiError(let message):
