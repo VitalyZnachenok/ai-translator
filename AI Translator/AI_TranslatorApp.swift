@@ -17,38 +17,211 @@ struct TranslatorApp: App {
 class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     private var statusBarItem: NSStatusItem?
     private var popover: NSPopover?
-    private weak var settingsWindow: NSWindow? // ИЗМЕНЕНО: weak ссылка
-    private weak var mainWindow: NSWindow? // ИЗМЕНЕНО: добавлена weak ссылка для главного окна
+    private weak var settingsWindow: NSWindow?
+    private weak var mainWindow: NSWindow?
     private var sharedSettingsManager = SettingsManager()
     private var localEventMonitor: Any?
-    private var globalEventMonitor: Any? // ДОБАВЛЕНО: для глобального мониторинга
+    private var globalEventMonitor: Any?
+    private var eventTap: CFMachPort?
+    private var runLoopSource: CFRunLoopSource?
     
     deinit {
-        // Очищаем мониторы событий
         removeEventMonitors()
+        stopGlobalHotkey()
     }
     
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupMenuBar()
         setupHotKeys()
+        requestAccessibilityPermissions()
+        setupGlobalHotkey()
         NSApp.setActivationPolicy(.accessory)
     }
     
-    private func setupHotKeys() {
-        // Добавляем локальный обработчик событий клавиатуры
-        localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            if self?.handleKeyEvent(event) == true {
-                return nil // Перехватываем событие
+    private func requestAccessibilityPermissions() {
+        let options = [kAXTrustedCheckOptionPrompt.takeRetainedValue(): true] as CFDictionary
+        let accessEnabled = AXIsProcessTrustedWithOptions(options)
+        
+        if !accessEnabled {
+            let alert = NSAlert()
+            alert.messageText = "Требуется разрешение"
+            alert.informativeText = """
+            Для использования глобальных горячих клавиш приложению требуется доступ к универсальному доступу.
+            
+            Пожалуйста, добавьте AI Переводчик в:
+            Системные настройки → Защита и безопасность → Конфиденциальность → Универсальный доступ
+            """
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "Открыть настройки")
+            alert.addButton(withTitle: "Позже")
+            
+            if alert.runModal() == .alertFirstButtonReturn {
+                NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
             }
-            return event // Пропускаем событие дальше
+        }
+    }
+    
+    private func setupGlobalHotkey() {
+        stopGlobalHotkey()
+        
+        guard AXIsProcessTrusted() else {
+            print("Нет доступа к Accessibility")
+            return
         }
         
-        // ДОБАВЛЕНО: Глобальный монитор для закрытия popover при клике вне его
+        let eventMask = (1 << CGEventType.keyDown.rawValue)
+        
+        guard let tap = CGEvent.tapCreate(
+            tap: .cgSessionEventTap,
+            place: .headInsertEventTap,
+            options: .defaultTap,
+            eventsOfInterest: CGEventMask(eventMask),
+            callback: { (proxy, type, event, refcon) -> Unmanaged<CGEvent>? in
+                guard let refcon = refcon else { return Unmanaged.passRetained(event) }
+                
+                let appDelegate = Unmanaged<AppDelegate>.fromOpaque(refcon).takeUnretainedValue()
+                
+                if appDelegate.checkHotkey(event: event) {
+                    // Перехватываем событие
+                    DispatchQueue.main.async {
+                        appDelegate.quickTranslateFromClipboard()
+                    }
+                    return nil
+                }
+                
+                return Unmanaged.passRetained(event)
+            },
+            userInfo: UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
+        ) else {
+            print("Не удалось создать event tap")
+            return
+        }
+        
+        eventTap = tap
+        runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+        CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
+        CGEvent.tapEnable(tap: tap, enable: true)
+    }
+    
+    private func stopGlobalHotkey() {
+        if let tap = eventTap {
+            CGEvent.tapEnable(tap: tap, enable: false)
+            if let source = runLoopSource {
+                CFRunLoopRemoveSource(CFRunLoopGetCurrent(), source, .commonModes)
+            }
+            eventTap = nil
+            runLoopSource = nil
+        }
+    }
+    
+    private func checkHotkey(event: CGEvent) -> Bool {
+        let flags = event.flags
+        let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+        
+        // Получаем сохраненную горячую клавишу
+        let hotkeyString = sharedSettingsManager.quickTranslateHotkey
+        let (savedKeyCode, savedModifiers) = parseHotkeyString(hotkeyString)
+        
+        // Проверяем модификаторы
+        var currentModifiers: CGEventFlags = []
+        if flags.contains(.maskCommand) { currentModifiers.insert(.maskCommand) }
+        if flags.contains(.maskShift) { currentModifiers.insert(.maskShift) }
+        if flags.contains(.maskAlternate) { currentModifiers.insert(.maskAlternate) }
+        if flags.contains(.maskControl) { currentModifiers.insert(.maskControl) }
+        
+        // Сравниваем с сохраненной комбинацией
+        return keyCode == savedKeyCode && currentModifiers == savedModifiers
+    }
+    
+    private func parseHotkeyString(_ hotkey: String) -> (Int64, CGEventFlags) {
+        var modifiers: CGEventFlags = []
+        var keyCode: Int64 = 0x11 // T по умолчанию
+        
+        // Парсим модификаторы
+        if hotkey.contains("⌘") { modifiers.insert(.maskCommand) }
+        if hotkey.contains("⇧") { modifiers.insert(.maskShift) }
+        if hotkey.contains("⌥") { modifiers.insert(.maskAlternate) }
+        if hotkey.contains("⌃") { modifiers.insert(.maskControl) }
+        
+        // Получаем последний символ и конвертируем в keyCode
+        if let lastChar = hotkey.last {
+            keyCode = Int64(keyCodeForCharacter(lastChar))
+        }
+        
+        return (keyCode, modifiers)
+    }
+    
+    private func keyCodeForCharacter(_ char: Character) -> UInt16 {
+        switch char.uppercased() {
+        case "A": return 0x00
+        case "S": return 0x01
+        case "D": return 0x02
+        case "F": return 0x03
+        case "H": return 0x04
+        case "G": return 0x05
+        case "Z": return 0x06
+        case "X": return 0x07
+        case "C": return 0x08
+        case "V": return 0x09
+        case "B": return 0x0B
+        case "Q": return 0x0C
+        case "W": return 0x0D
+        case "E": return 0x0E
+        case "R": return 0x0F
+        case "Y": return 0x10
+        case "T": return 0x11
+        case "1": return 0x12
+        case "2": return 0x13
+        case "3": return 0x14
+        case "4": return 0x15
+        case "6": return 0x16
+        case "5": return 0x17
+        case "=": return 0x18
+        case "9": return 0x19
+        case "7": return 0x1A
+        case "-": return 0x1B
+        case "8": return 0x1C
+        case "0": return 0x1D
+        case "]": return 0x1E
+        case "O": return 0x1F
+        case "U": return 0x20
+        case "[": return 0x21
+        case "I": return 0x22
+        case "P": return 0x23
+        case "L": return 0x25
+        case "J": return 0x26
+        case "K": return 0x28
+        case "N": return 0x2D
+        case "M": return 0x2E
+        default: return 0x11 // T по умолчанию
+        }
+    }
+    
+    private func setupHotKeys() {
+        localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            if self?.handleKeyEvent(event) == true {
+                return nil
+            }
+            return event
+        }
+        
         globalEventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
             if self?.popover?.isShown == true {
                 self?.closePopover()
             }
         }
+        
+        // Подписываемся на изменение горячей клавиши
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(hotkeyChanged),
+            name: Notification.Name("HotkeyChanged"),
+            object: nil
+        )
+    }
+    
+    @objc private func hotkeyChanged() {
+        setupGlobalHotkey() // Перерегистрируем с новой комбинацией
     }
     
     private func removeEventMonitors() {
@@ -63,7 +236,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
     
     private func handleKeyEvent(_ event: NSEvent) -> Bool {
-        // Проверяем Cmd+, (настройки)
         if event.modifierFlags.contains(.command) &&
            event.charactersIgnoringModifiers == "," {
             DispatchQueue.main.async { [weak self] in
@@ -72,7 +244,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             return true
         }
         
-        // Проверяем Cmd+O (открыть переводчик)
         if event.modifierFlags.contains(.command) &&
            event.charactersIgnoringModifiers == "o" {
             DispatchQueue.main.async { [weak self] in
@@ -81,7 +252,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             return true
         }
         
-        // ДОБАВЛЕНО: Cmd+Q для выхода
         if event.modifierFlags.contains(.command) &&
            event.charactersIgnoringModifiers == "q" {
             DispatchQueue.main.async { [weak self] in
@@ -98,7 +268,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         
         guard let button = statusBarItem?.button else { return }
         
-        // УЛУЧШЕНО: создаем собственную иконку
         if let image = createTranslatorIcon() {
             button.image = image
         } else {
@@ -106,8 +275,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         }
         
         button.imagePosition = .imageOnly
-        
-        // Убираем автоматическое меню и настраиваем кастомное поведение
         button.target = self
         button.action = #selector(statusBarButtonClicked(_:))
         button.sendAction(on: [.leftMouseUp, .rightMouseUp])
@@ -115,7 +282,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         setupPopover()
     }
     
-    // ДОБАВЛЕНО: Создание кастомной иконки
     private func createTranslatorIcon() -> NSImage? {
         let size = NSSize(width: 18, height: 18)
         let image = NSImage(size: size)
@@ -123,7 +289,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         image.lockFocus()
         defer { image.unlockFocus() }
         
-        // Рисуем глобус с буквами
         let config = NSImage.SymbolConfiguration(pointSize: 14, weight: .medium)
         if let globeImage = NSImage(systemSymbolName: "globe", accessibilityDescription: nil)?
             .withSymbolConfiguration(config) {
@@ -131,7 +296,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             let rect = NSRect(x: 2, y: 2, width: 14, height: 14)
             globeImage.draw(in: rect)
             
-            // Добавляем маленькие буквы AI
             let font = NSFont.systemFont(ofSize: 6, weight: .bold)
             let attributes: [NSAttributedString.Key: Any] = [
                 .font: font,
@@ -147,7 +311,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 height: textSize.height
             )
             
-            // Фон для текста
             NSColor.controlBackgroundColor.withAlphaComponent(0.8).setFill()
             let bgRect = textRect.insetBy(dx: -1, dy: 0)
             NSBezierPath(roundedRect: bgRect, xRadius: 2, yRadius: 2).fill()
@@ -163,11 +326,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         let event = NSApp.currentEvent!
         
         if event.type == .rightMouseUp {
-            // Правый клик - показываем контекстное меню
             closePopover()
             showContextMenu()
         } else {
-            // Левый клик - показываем/скрываем popover
             togglePopover()
         }
     }
@@ -176,11 +337,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         let menu = NSMenu()
         
         menu.addItem(NSMenuItem(title: "🌐 Открыть переводчик", action: #selector(showMainWindow), keyEquivalent: "o"))
+        
+        menu.addItem(NSMenuItem.separator())
+        
+        // Получаем текущую горячую клавишу из настроек
+        let hotkeyDisplay = sharedSettingsManager.quickTranslateHotkey
+        let quickTranslateItem = NSMenuItem(title: "⚡ Перевести выделенный текст (\(hotkeyDisplay))", action: #selector(quickTranslateFromClipboard), keyEquivalent: "")
+        menu.addItem(quickTranslateItem)
+        
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "⚙️ Настройки...", action: #selector(showSettings), keyEquivalent: ","))
         menu.addItem(NSMenuItem.separator())
         
-        // ДОБАВЛЕНО: История переводов
         menu.addItem(NSMenuItem(title: "📋 История переводов", action: #selector(showHistory), keyEquivalent: "h"))
         menu.addItem(NSMenuItem.separator())
         
@@ -192,16 +360,81 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             item.target = self
         }
         
-        // Показываем меню в позиции кнопки
         guard let button = statusBarItem?.button else { return }
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.height), in: button)
+    }
+    
+    @objc private func quickTranslateFromClipboard() {
+        // Сохраняем текущее содержимое буфера
+        let oldClipboard = NSPasteboard.general.string(forType: .string)
+        
+        // Очищаем буфер обмена
+        NSPasteboard.general.clearContents()
+        
+        // Симулируем Cmd+C для копирования выделенного текста
+        simulateCopy()
+        
+        // Даем время на копирование
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            guard let self = self else { return }
+            
+            // Получаем скопированный текст
+            guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else {
+                // Восстанавливаем старый буфер если ничего не скопировалось
+                if let oldText = oldClipboard {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(oldText, forType: .string)
+                }
+                
+                let alert = NSAlert()
+                alert.messageText = "Нет выделенного текста"
+                alert.informativeText = "Выделите текст для перевода и попробуйте снова"
+                alert.alertStyle = .warning
+                alert.addButton(withTitle: "OK")
+                alert.runModal()
+                return
+            }
+            
+            // Открываем главное окно
+            self.showMainWindow()
+            
+            // Отправляем текст для перевода
+            UserDefaults.standard.set(text, forKey: "pendingTranslationText")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                NotificationCenter.default.post(name: Notification.Name("QuickTranslateText"), object: nil)
+                
+                // Восстанавливаем старый буфер обмена после небольшой задержки
+                if let oldText = oldClipboard, oldText != text {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(oldText, forType: .string)
+                    }
+                }
+            }
+        }
+    }
+    
+    private func simulateCopy() {
+        // Создаем событие нажатия Cmd+C
+        let source = CGEventSource(stateID: .combinedSessionState)
+        
+        // Создаем событие для клавиши C с модификатором Cmd
+        if let keyDownEvent = CGEvent(keyboardEventSource: source, virtualKey: 0x08, keyDown: true) {
+            keyDownEvent.flags = .maskCommand
+            keyDownEvent.post(tap: .cgAnnotatedSessionEventTap)
+        }
+        
+        if let keyUpEvent = CGEvent(keyboardEventSource: source, virtualKey: 0x08, keyDown: false) {
+            keyUpEvent.flags = .maskCommand
+            keyUpEvent.post(tap: .cgAnnotatedSessionEventTap)
+        }
     }
     
     private func setupPopover() {
         popover = NSPopover()
         popover?.contentSize = NSSize(width: 450, height: 550)
         popover?.behavior = .transient
-        popover?.animates = true // ДОБАВЛЕНО: анимация
+        popover?.animates = true
         popover?.contentViewController = NSHostingController(
             rootView: CompactContentView(settingsManager: sharedSettingsManager)
         )
@@ -214,7 +447,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             if popover.isShown {
                 closePopover()
             } else {
-                // УЛУЧШЕНО: закрываем все окна перед показом popover
                 mainWindow?.close()
                 settingsWindow?.close()
                 
@@ -229,30 +461,32 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
     
     @objc func showMainWindow() {
-        // УЛУЧШЕНО: проверяем существующее окно
         if let existingWindow = mainWindow, existingWindow.isVisible {
             existingWindow.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             return
         }
         
-        closePopover() // Закрываем popover при открытии главного окна
+        closePopover()
         
         let newWindow = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 750, height: 700),
+            contentRect: NSRect(x: 0, y: 0, width: 800, height: 750),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         
         newWindow.title = "AI Переводчик"
-        newWindow.isReleasedWhenClosed = false // ВАЖНО: предотвращаем автоматическое освобождение
-        newWindow.minSize = NSSize(width: 600, height: 500) // ДОБАВЛЕНО: минимальный размер
-        newWindow.contentView = NSHostingView(
-            rootView: ContentView(settingsManager: sharedSettingsManager)
-        )
+        newWindow.isReleasedWhenClosed = false
+        newWindow.minSize = NSSize(width: 700, height: 600)
+        newWindow.maxSize = NSSize(width: 1200, height: 1000)
+        
+        let contentView = ContentView(settingsManager: sharedSettingsManager)
+            .background(Color(NSColor.windowBackgroundColor))
+        
+        newWindow.contentView = NSHostingView(rootView: contentView)
         newWindow.center()
-        newWindow.delegate = self // ДОБАВЛЕНО: делегат для обработки закрытия
+        newWindow.delegate = self
         
         mainWindow = newWindow
         newWindow.makeKeyAndOrderFront(nil)
@@ -272,14 +506,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         closePopover() // Закрываем popover при открытии настроек
         
         let newWindow = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 650, height: 750),
-            styleMask: [.titled, .closable, .miniaturizable],
+            contentRect: NSRect(x: 0, y: 0, width: 700, height: 800),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         
-        newWindow.title = "Настройки"
-        newWindow.isReleasedWhenClosed = false // ВАЖНО: предотвращаем автоматическое освобождение
+        newWindow.title = "Настройки AI Переводчика"
+        newWindow.isReleasedWhenClosed = false
+        newWindow.minSize = NSSize(width: 680, height: 750)
+        newWindow.maxSize = NSSize(width: 900, height: 1000)
         
         // ИЗМЕНЕНО: создаем SettingsView с замыканием для закрытия
         let settingsView = SettingsView(settingsManager: sharedSettingsManager) { [weak newWindow] in
@@ -296,7 +532,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         NSApp.activate(ignoringOtherApps: true)
     }
     
-    // ДОБАВЛЕНО: метод показа истории
     @objc private func showHistory() {
         let alert = NSAlert()
         alert.messageText = "История переводов"
@@ -315,14 +550,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         Умный переводчик с поддержкой OpenWebUI API
         
         Возможности:
-        • Перевод между 14 языками
+        • Перевод между 16 языками
         • Интеграция с любыми AI моделями
         • Работа из меню-бара
         • Быстрый доступ и компактный интерфейс
         • Кастомные промпты для разных стилей перевода
+        • Быстрый перевод выделенного текста
+        • Автоматическое копирование и восстановление буфера
         
         Горячие клавиши:
         • Cmd+O - открыть переводчик
+        • Настраиваемая горячая клавиша - перевести выделенный текст
         • Cmd+, - настройки
         • Cmd+Q - выход
         
@@ -334,34 +572,28 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
     
     @objc private func quit() {
-        // Закрываем все окна
         popover?.performClose(nil)
         settingsWindow?.close()
         mainWindow?.close()
         
-        // Очищаем мониторы событий
         removeEventMonitors()
         
         NSApp.terminate(nil)
     }
     
     func applicationWillTerminate(_ notification: Notification) {
-        // Дополнительная очистка при завершении
         removeEventMonitors()
         
-        // Очищаем ссылки на окна
         settingsWindow = nil
         mainWindow = nil
         popover = nil
     }
     
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        // НЕ завершаем приложение при закрытии окон, так как работаем из меню-бара
         return false
     }
 }
 
-// MARK: - Расширение для обработки закрытия окон
 extension AppDelegate: NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         if let window = notification.object as? NSWindow {
@@ -369,7 +601,6 @@ extension AppDelegate: NSWindowDelegate {
                 settingsWindow = nil
             } else if window == mainWindow {
                 mainWindow = nil
-                // Возвращаемся в режим accessory при закрытии главного окна
                 NSApp.setActivationPolicy(.accessory)
             }
         }
@@ -393,11 +624,12 @@ struct ContentView: View {
     @State private var showingSettings = false
     @State private var selectedSourceLanguage = "auto"
     @State private var selectedTargetLanguage = "ru"
-    @State private var selectedPromptId = "default" // ДОБАВЛЕНО: выбранный промпт
+    @State private var selectedPromptId = "default"
     @State private var errorMessage = ""
     @State private var showingError = false
     @State private var copyFeedback = false
     @State private var keyEventMonitor: Any?
+    @State private var notificationObserver: Any?
     
     let languages = [
         ("auto", "🌐 Авто-определение"),
@@ -435,7 +667,6 @@ struct ContentView: View {
                 
                 Spacer()
                 
-                // Индикатор статуса подключения
                 HStack(spacing: 4) {
                     Circle()
                         .fill(settingsManager.isConfigured ? Color.green : Color.red)
@@ -496,7 +727,7 @@ struct ContentView: View {
             }
             .padding(.horizontal)
             
-            // ДОБАВЛЕНО: Выбор стиля перевода
+            // Выбор стиля перевода
             HStack {
                 VStack(alignment: .leading) {
                     Text("Стиль перевода:")
@@ -515,7 +746,6 @@ struct ContentView: View {
                 
                 Spacer()
                 
-                // Подсказка о текущем стиле
                 if let currentPrompt = settingsManager.customPrompts.first(where: { $0.id == selectedPromptId }) {
                     Text(currentPrompt.description)
                         .font(.caption)
@@ -696,9 +926,11 @@ struct ContentView: View {
         .onAppear {
             translationService.configure(with: settingsManager)
             setupKeyboardShortcuts()
+            setupQuickTranslateListener()
         }
         .onDisappear {
             removeKeyboardShortcuts()
+            removeQuickTranslateListener()
         }
     }
     
@@ -723,6 +955,32 @@ struct ContentView: View {
         }
     }
     
+    private func setupQuickTranslateListener() {
+        notificationObserver = NotificationCenter.default.addObserver(
+            forName: Notification.Name("QuickTranslateText"),
+            object: nil,
+            queue: .main
+        ) { _ in
+            if let text = UserDefaults.standard.string(forKey: "pendingTranslationText") {
+                self.inputText = text
+                UserDefaults.standard.removeObject(forKey: "pendingTranslationText")
+                
+                if self.settingsManager.isConfigured {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        self.translateText()
+                    }
+                }
+            }
+        }
+    }
+    
+    private func removeQuickTranslateListener() {
+        if let observer = notificationObserver {
+            NotificationCenter.default.removeObserver(observer)
+            notificationObserver = nil
+        }
+    }
+    
     private func swapLanguages() {
         guard selectedSourceLanguage != "auto" else { return }
         let temp = selectedSourceLanguage
@@ -741,7 +999,6 @@ struct ContentView: View {
         outputText = ""
         errorMessage = ""
         
-        // Получаем выбранный промпт
         let customPrompt = settingsManager.customPrompts.first(where: { $0.id == selectedPromptId })
         
         Task {
@@ -800,11 +1057,12 @@ struct CompactContentView: View {
     @State private var isTranslating = false
     @State private var selectedSourceLanguage = "auto"
     @State private var selectedTargetLanguage = "ru"
-    @State private var selectedPromptId = "default" // ДОБАВЛЕНО
+    @State private var selectedPromptId = "default"
     @State private var errorMessage = ""
     @State private var showingError = false
     @State private var copyFeedback = false
     @State private var keyEventMonitor: Any?
+    @State private var notificationObserver: Any?
     
     let languages = [
         ("auto", "🌐 Авто"),
@@ -831,7 +1089,6 @@ struct CompactContentView: View {
     
     var body: some View {
         VStack(spacing: 12) {
-            // Заголовок с индикатором статуса
             HStack {
                 Image(systemName: "globe")
                     .foregroundColor(.blue)
@@ -858,7 +1115,6 @@ struct CompactContentView: View {
             }
             .padding(.horizontal)
             
-            // Выбор языков
             HStack(spacing: 8) {
                 Picker("От", selection: $selectedSourceLanguage) {
                     ForEach(languages, id: \.0) { code, name in
@@ -895,7 +1151,6 @@ struct CompactContentView: View {
             }
             .padding(.horizontal)
             
-            // ДОБАВЛЕНО: Выбор стиля (компактный)
             if !settingsManager.customPrompts.isEmpty {
                 HStack {
                     Picker("Стиль", selection: $selectedPromptId) {
@@ -912,7 +1167,6 @@ struct CompactContentView: View {
                 .padding(.horizontal)
             }
             
-            // Поле ввода
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
                     Text("Текст:")
@@ -946,7 +1200,6 @@ struct CompactContentView: View {
             }
             .padding(.horizontal)
             
-            // Кнопка перевода
             Button(action: translateText) {
                 HStack {
                     if isTranslating {
@@ -975,7 +1228,6 @@ struct CompactContentView: View {
             .buttonStyle(PlainButtonStyle())
             .help("Перевести текст (⌘↩)")
             
-            // Результат
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
                     Text("Результат:")
@@ -1009,7 +1261,6 @@ struct CompactContentView: View {
             }
             .padding(.horizontal)
             
-            // Предупреждение о настройках
             if !settingsManager.isConfigured {
                 HStack(spacing: 4) {
                     Image(systemName: "exclamationmark.triangle.fill")
@@ -1042,9 +1293,11 @@ struct CompactContentView: View {
         .onAppear {
             translationService.configure(with: settingsManager)
             setupKeyboardShortcuts()
+            setupQuickTranslateListener()
         }
         .onDisappear {
             removeKeyboardShortcuts()
+            removeQuickTranslateListener()
         }
         .alert("Ошибка", isPresented: $showingError) {
             Button("OK") { }
@@ -1071,6 +1324,32 @@ struct CompactContentView: View {
         if let monitor = keyEventMonitor {
             NSEvent.removeMonitor(monitor)
             keyEventMonitor = nil
+        }
+    }
+    
+    private func setupQuickTranslateListener() {
+        notificationObserver = NotificationCenter.default.addObserver(
+            forName: Notification.Name("QuickTranslateText"),
+            object: nil,
+            queue: .main
+        ) { _ in
+            if let text = UserDefaults.standard.string(forKey: "pendingTranslationText") {
+                self.inputText = text
+                UserDefaults.standard.removeObject(forKey: "pendingTranslationText")
+                
+                if self.settingsManager.isConfigured {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        self.translateText()
+                    }
+                }
+            }
+        }
+    }
+    
+    private func removeQuickTranslateListener() {
+        if let observer = notificationObserver {
+            NotificationCenter.default.removeObserver(observer)
+            notificationObserver = nil
         }
     }
     
@@ -1156,12 +1435,16 @@ struct SettingsView: View {
     @State private var testResult = ""
     @State private var showingTestResult = false
     @State private var showAdvancedSettings = false
-    @State private var selectedTab = 0 // ДОБАВЛЕНО: вкладки
+    @State private var selectedTab = 0
     
-    // ДОБАВЛЕНО: для управления промптами
     @State private var customPrompts: [TranslationPrompt] = []
     @State private var showingAddPrompt = false
     @State private var editingPrompt: TranslationPrompt?
+    
+    // ДОБАВЛЕНО: для настройки горячих клавиш
+    @State private var quickTranslateHotkey = "⌘⇧T"
+    @State private var isRecordingHotkey = false
+    @State private var hotkeyMonitor: Any?
     
     init(settingsManager: SettingsManager, onClose: (() -> Void)? = nil) {
         self.settingsManager = settingsManager
@@ -1169,9 +1452,37 @@ struct SettingsView: View {
     }
     
     var body: some View {
-        NavigationView {
+        VStack(spacing: 0) {
+            // Заголовок и кнопки управления
+            HStack {
+                Text("Настройки AI Переводчика")
+                    .font(.title2)
+                    .fontWeight(.bold)
+                
+                Spacer()
+                
+                HStack(spacing: 12) {
+                    Button("Отмена") {
+                        loadSettings()
+                        onClose?() ?? dismiss()
+                    }
+                    .keyboardShortcut(.escape)
+                    
+                    Button("Сохранить") {
+                        saveSettings()
+                        onClose?() ?? dismiss()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(apiUrl.isEmpty || apiToken.isEmpty || modelName.isEmpty)
+                    .keyboardShortcut(.defaultAction)
+                }
+            }
+            .padding()
+            .background(Color(NSColor.windowBackgroundColor))
+            
+            Divider()
+            
             TabView(selection: $selectedTab) {
-                // Вкладка подключения
                 ScrollView {
                     VStack(spacing: 20) {
                         connectionSettings
@@ -1186,7 +1497,6 @@ struct SettingsView: View {
                 }
                 .tag(0)
                 
-                // ДОБАВЛЕНО: Вкладка промптов
                 VStack {
                     promptsSettings
                 }
@@ -1194,27 +1504,20 @@ struct SettingsView: View {
                     Label("Стили перевода", systemImage: "text.bubble")
                 }
                 .tag(1)
-            }
-            .frame(width: 650, height: 750)
-            .navigationTitle("Настройки AI Переводчика")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Отмена") {
-                        loadSettings()
-                        onClose?() ?? dismiss()
-                    }
-                }
                 
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Сохранить") {
-                        saveSettings()
-                        onClose?() ?? dismiss()
+                ScrollView {
+                    VStack(spacing: 20) {
+                        hotkeySettings
                     }
-                    .disabled(apiUrl.isEmpty || apiToken.isEmpty || modelName.isEmpty)
-                    .keyboardShortcut(.defaultAction)
+                    .padding()
                 }
+                .tabItem {
+                    Label("Горячие клавиши", systemImage: "keyboard")
+                }
+                .tag(2)
             }
         }
+        .frame(width: 650, height: 750)
         .onAppear {
             loadSettings()
         }
@@ -1369,7 +1672,6 @@ struct SettingsView: View {
         .padding(.horizontal)
     }
     
-    // ДОБАВЛЕНО: Интерфейс для управления промптами
     private var promptsSettings: some View {
         VStack(spacing: 16) {
             HStack {
@@ -1448,6 +1750,231 @@ struct SettingsView: View {
         }
     }
     
+    // ДОБАВЛЕНО: Интерфейс настройки горячих клавиш
+    private var hotkeySettings: some View {
+        VStack(spacing: 20) {
+            GroupBox(label: Label("⚡ Быстрый перевод", systemImage: "keyboard")) {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("Горячая клавиша для быстрого перевода из буфера обмена")
+                        .font(.headline)
+                    
+                    HStack {
+                        Text("Текущая комбинация:")
+                            .foregroundColor(.secondary)
+                        
+                        Spacer()
+                        
+                        Button(action: { startRecordingHotkey() }) {
+                            HStack {
+                                if isRecordingHotkey {
+                                    ProgressView()
+                                        .scaleEffect(0.7)
+                                        .progressViewStyle(CircularProgressViewStyle())
+                                    Text("Нажмите новую комбинацию...")
+                                        .foregroundColor(.orange)
+                                } else {
+                                    Text(quickTranslateHotkey)
+                                        .font(.system(.body, design: .monospaced))
+                                        .foregroundColor(.blue)
+                                }
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .background(isRecordingHotkey ? Color.orange.opacity(0.1) : Color.blue.opacity(0.1))
+                            .cornerRadius(8)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        
+                        if isRecordingHotkey {
+                            Button("Отмена") {
+                                stopRecordingHotkey()
+                            }
+                            .buttonStyle(.bordered)
+                        } else {
+                            Button("Изменить") {
+                                startRecordingHotkey()
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                    }
+                    
+                    Text("Используйте модификаторы: ⌘ Command, ⇧ Shift, ⌥ Option, ⌃ Control")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    
+                    Divider()
+                    
+                    Button("Сбросить на значение по умолчанию (⌘⇧T)") {
+                        quickTranslateHotkey = "⌘⇧T"
+                        settingsManager.quickTranslateHotkey = quickTranslateHotkey
+                    }
+                    .buttonStyle(LinkButtonStyle())
+                }
+                .padding()
+            }
+            
+            GroupBox(label: Label("📋 Как использовать", systemImage: "info.circle")) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Быстрый перевод выделенного текста:")
+                        .font(.headline)
+                    
+                    HStack(alignment: .top, spacing: 8) {
+                        Text("1.")
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundColor(.blue)
+                        Text("Выделите текст в любом приложении")
+                            .font(.caption)
+                    }
+                    
+                    HStack(alignment: .top, spacing: 8) {
+                        Text("2.")
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundColor(.blue)
+                        Text("Нажмите горячую клавишу \(quickTranslateHotkey)")
+                            .font(.caption)
+                    }
+                    
+                    HStack(alignment: .top, spacing: 8) {
+                        Text("3.")
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundColor(.blue)
+                        Text("Переводчик автоматически скопирует выделенный текст и начнет перевод")
+                            .font(.caption)
+                    }
+                    
+                    Divider()
+                    
+                    HStack {
+                        Image(systemName: "info.circle.fill")
+                            .foregroundColor(.blue)
+                        Text("Приложение автоматически восстановит предыдущее содержимое буфера обмена")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    Divider()
+                    
+                    Text("Альтернативный способ:")
+                        .font(.headline)
+                    
+                    Text("Правый клик на иконке в меню-баре → \"Перевести выделенный текст\"")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .padding()
+            }
+            
+            Spacer()
+        }
+    }
+    
+    private func startRecordingHotkey() {
+        isRecordingHotkey = true
+        
+        // Удаляем старый монитор если есть
+        if let monitor = hotkeyMonitor {
+            NSEvent.removeMonitor(monitor)
+        }
+        
+        // Создаем новый монитор для записи горячей клавиши
+        hotkeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard self.isRecordingHotkey else { return event }
+            
+            var modifiers: [String] = []
+            
+            if event.modifierFlags.contains(.control) {
+                modifiers.append("⌃")
+            }
+            if event.modifierFlags.contains(.option) {
+                modifiers.append("⌥")
+            }
+            if event.modifierFlags.contains(.shift) {
+                modifiers.append("⇧")
+            }
+            if event.modifierFlags.contains(.command) {
+                modifiers.append("⌘")
+            }
+            
+            // Требуем хотя бы один модификатор
+            if !modifiers.isEmpty {
+                let keyChar = self.keyCharacterForKeyCode(event.keyCode)
+                self.quickTranslateHotkey = modifiers.joined() + keyChar
+                self.settingsManager.quickTranslateHotkey = self.quickTranslateHotkey
+                self.stopRecordingHotkey()
+                return nil // Перехватываем событие
+            }
+            
+            return event
+        }
+    }
+    
+    private func stopRecordingHotkey() {
+        isRecordingHotkey = false
+        
+        if let monitor = hotkeyMonitor {
+            NSEvent.removeMonitor(monitor)
+            hotkeyMonitor = nil
+        }
+    }
+    
+    private func keyCharacterForKeyCode(_ keyCode: UInt16) -> String {
+        switch keyCode {
+        case 0x00: return "A"
+        case 0x01: return "S"
+        case 0x02: return "D"
+        case 0x03: return "F"
+        case 0x04: return "H"
+        case 0x05: return "G"
+        case 0x06: return "Z"
+        case 0x07: return "X"
+        case 0x08: return "C"
+        case 0x09: return "V"
+        case 0x0B: return "B"
+        case 0x0C: return "Q"
+        case 0x0D: return "W"
+        case 0x0E: return "E"
+        case 0x0F: return "R"
+        case 0x10: return "Y"
+        case 0x11: return "T"
+        case 0x12: return "1"
+        case 0x13: return "2"
+        case 0x14: return "3"
+        case 0x15: return "4"
+        case 0x16: return "6"
+        case 0x17: return "5"
+        case 0x18: return "="
+        case 0x19: return "9"
+        case 0x1A: return "7"
+        case 0x1B: return "-"
+        case 0x1C: return "8"
+        case 0x1D: return "0"
+        case 0x1E: return "]"
+        case 0x1F: return "O"
+        case 0x20: return "U"
+        case 0x21: return "["
+        case 0x22: return "I"
+        case 0x23: return "P"
+        case 0x25: return "L"
+        case 0x26: return "J"
+        case 0x27: return "'"
+        case 0x28: return "K"
+        case 0x29: return ";"
+        case 0x2A: return "\\"
+        case 0x2B: return ","
+        case 0x2C: return "/"
+        case 0x2D: return "N"
+        case 0x2E: return "M"
+        case 0x2F: return "."
+        case 0x32: return "`"
+        case 0x24: return "↩"
+        case 0x30: return "⇥"
+        case 0x31: return "Space"
+        case 0x33: return "⌫"
+        case 0x35: return "⎋"
+        default: return "?"
+        }
+    }
+    
     private let instructionSteps = [
         "Откройте ваш OpenWebUI",
         "Перейдите в Settings → Account → API Keys",
@@ -1463,6 +1990,7 @@ struct SettingsView: View {
         temperature = settingsManager.temperature
         maxTokens = settingsManager.maxTokens
         customPrompts = settingsManager.customPrompts
+        quickTranslateHotkey = settingsManager.quickTranslateHotkey
     }
     
     private func saveSettings() {
@@ -1472,7 +2000,17 @@ struct SettingsView: View {
         settingsManager.temperature = temperature
         settingsManager.maxTokens = maxTokens
         settingsManager.customPrompts = customPrompts
+        
+        // Проверяем, изменилась ли горячая клавиша
+        let hotkeyChanged = settingsManager.quickTranslateHotkey != quickTranslateHotkey
+        settingsManager.quickTranslateHotkey = quickTranslateHotkey
+        
         settingsManager.saveSettings()
+        
+        // Отправляем уведомление об изменении горячей клавиши
+        if hotkeyChanged {
+            NotificationCenter.default.post(name: Notification.Name("HotkeyChanged"), object: nil)
+        }
     }
     
     private func deletePrompt(_ prompt: TranslationPrompt) {
@@ -1686,7 +2224,6 @@ class TranslationService: ObservableObject {
             throw TranslationError.invalidURL
         }
         
-        // ИЗМЕНЕНО: Используем кастомный системный промпт если есть
         let systemMessage = customPrompt?.systemPrompt ?? "You are a professional translator. Translate accurately while preserving the tone and style of the original text."
         
         let requestBody: [String: Any] = [
@@ -1803,7 +2340,6 @@ class TranslationService: ObservableObject {
             ? "Автоматически определи исходный язык текста и"
             : "Переведи с языка \(sourceName)"
         
-        // ИЗМЕНЕНО: Добавляем кастомные инструкции если есть
         let additionalInstructions = customPrompt?.userPromptAddition ?? ""
         
         return """
@@ -1822,7 +2358,6 @@ class TranslationService: ObservableObject {
 import Foundation
 import SwiftUI
 
-// ДОБАВЛЕНО: Модель для кастомных промптов
 struct TranslationPrompt: Identifiable, Codable {
     var id: String = UUID().uuidString
     var name: String
@@ -1838,7 +2373,8 @@ class SettingsManager: ObservableObject {
     @Published var modelName: String = ""
     @Published var temperature: Double = 0.3
     @Published var maxTokens: Int = 1024
-    @Published var customPrompts: [TranslationPrompt] = [] // ДОБАВЛЕНО
+    @Published var customPrompts: [TranslationPrompt] = []
+    @Published var quickTranslateHotkey: String = "⌘⇧T"  // ДОБАВЛЕНО
     
     var isConfigured: Bool {
         !apiUrl.isEmpty && !apiToken.isEmpty && !modelName.isEmpty
@@ -1861,11 +2397,12 @@ class SettingsManager: ObservableObject {
         let savedMaxTokens = userDefaults.integer(forKey: "maxTokens")
         maxTokens = savedMaxTokens == 0 ? 1024 : savedMaxTokens
         
-        // ДОБАВЛЕНО: Загрузка кастомных промптов
         if let promptsData = userDefaults.data(forKey: "customPrompts"),
            let decodedPrompts = try? JSONDecoder().decode([TranslationPrompt].self, from: promptsData) {
             customPrompts = decodedPrompts
         }
+        
+        quickTranslateHotkey = userDefaults.string(forKey: "quickTranslateHotkey") ?? "⌘⇧T"  // ДОБАВЛЕНО
     }
     
     func saveSettings() {
@@ -1875,10 +2412,11 @@ class SettingsManager: ObservableObject {
         userDefaults.set(temperature, forKey: "temperature")
         userDefaults.set(maxTokens, forKey: "maxTokens")
         
-        // ДОБАВЛЕНО: Сохранение кастомных промптов
         if let encodedPrompts = try? JSONEncoder().encode(customPrompts) {
             userDefaults.set(encodedPrompts, forKey: "customPrompts")
         }
+        
+        userDefaults.set(quickTranslateHotkey, forKey: "quickTranslateHotkey")  // ДОБАВЛЕНО
     }
     
     func resetToDefaults() {
@@ -1888,6 +2426,7 @@ class SettingsManager: ObservableObject {
         temperature = 0.3
         maxTokens = 1024
         customPrompts = []
+        quickTranslateHotkey = "⌘⇧T"  // ДОБАВЛЕНО
         saveSettings()
     }
 }
