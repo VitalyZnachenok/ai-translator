@@ -559,7 +559,7 @@ struct ContentView: View {
                             .stroke(Color.gray.opacity(0.3), lineWidth: 1)
                     )
                     .frame(minHeight: 120, maxHeight: 200)
-                    .onChange(of: inputText) { newValue in
+                    .onChange(of: inputText) { _, newValue in
                         if newValue.count > 5000 {
                             inputText = String(newValue.prefix(5000))
                         }
@@ -938,7 +938,7 @@ struct CompactContentView: View {
                     .background(Color(.textBackgroundColor))
                     .cornerRadius(6)
                     .frame(minHeight: 80, maxHeight: 120)
-                    .onChange(of: inputText) { newValue in
+                    .onChange(of: inputText) { _, newValue in
                         if newValue.count > 1000 {
                             inputText = String(newValue.prefix(1000))
                         }
