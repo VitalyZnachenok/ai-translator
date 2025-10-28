@@ -667,13 +667,49 @@ struct ContentView: View {
                 
                 Spacer()
                 
-                HStack(spacing: 4) {
-                    Circle()
-                        .fill(settingsManager.isConfigured ? Color.green : Color.red)
-                        .frame(width: 8, height: 8)
-                    Text(settingsManager.isConfigured ? "Подключено" : "Не настроено")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                HStack(spacing: 8) {
+                    // Селектор профилей
+                    if !settingsManager.connectionProfiles.isEmpty {
+                        Menu {
+                            ForEach(settingsManager.connectionProfiles) { profile in
+                                Button(action: {
+                                    settingsManager.setActiveProfile(profile.id)
+                                }) {
+                                    HStack {
+                                        Text(profile.displayName)
+                                        if settingsManager.activeProfileId == profile.id {
+                                            Image(systemName: "checkmark")
+                                        }
+                                    }
+                                }
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                if let activeProfile = settingsManager.activeProfile {
+                                    Text(activeProfile.icon)
+                                        .font(.caption)
+                                    Text(activeProfile.name)
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                        .lineLimit(1)
+                                }
+                                Image(systemName: "chevron.down")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        .menuStyle(.borderlessButton)
+                        .help("Переключить профиль подключения")
+                    }
+                    
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(settingsManager.isConfigured ? Color.green : Color.red)
+                            .frame(width: 8, height: 8)
+                        Text(settingsManager.isConfigured ? "Подключено" : "Не настроено")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
                 }
                 
                 Button(action: { showingSettings = true }) {
@@ -1098,6 +1134,31 @@ struct CompactContentView: View {
                 
                 Spacer()
                 
+                // Селектор профилей (компактный)
+                if !settingsManager.connectionProfiles.isEmpty {
+                    Menu {
+                        ForEach(settingsManager.connectionProfiles) { profile in
+                            Button(action: {
+                                settingsManager.setActiveProfile(profile.id)
+                            }) {
+                                HStack {
+                                    Text(profile.displayName)
+                                    if settingsManager.activeProfileId == profile.id {
+                                        Image(systemName: "checkmark")
+                                    }
+                                }
+                            }
+                        }
+                    } label: {
+                        if let activeProfile = settingsManager.activeProfile {
+                            Text(activeProfile.icon)
+                                .font(.caption2)
+                        }
+                    }
+                    .menuStyle(.borderlessButton)
+                    .help("Переключить профиль")
+                }
+                
                 Circle()
                     .fill(settingsManager.isConfigured ? Color.green : Color.red)
                     .frame(width: 6, height: 6)
@@ -1453,6 +1514,12 @@ struct SettingsView: View {
     @State private var isRecordingHotkey = false
     @State private var hotkeyMonitor: Any?
     
+    // ДОБАВЛЕНО: для управления профилями
+    @State private var showingAddProfile = false
+    @State private var editingProfile: ConnectionProfile?
+    @State private var selectedProfileName = ""
+    @State private var selectedProfileIcon = "🌐"
+    
     init(settingsManager: SettingsManager, onClose: (() -> Void)? = nil) {
         self.settingsManager = settingsManager
         self.onClose = onClose
@@ -1480,7 +1547,6 @@ struct SettingsView: View {
                         onClose?() ?? dismiss()
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(apiUrl.isEmpty || apiToken.isEmpty || selectedModelId.isEmpty)
                     .keyboardShortcut(.defaultAction)
                 }
             }
@@ -1492,8 +1558,8 @@ struct SettingsView: View {
             TabView(selection: $selectedTab) {
                 ScrollView {
                     VStack(spacing: 20) {
+                        profilesSection
                         connectionSettings
-                        generationSettings
                         testingSection
                         helpSection
                     }
@@ -1540,152 +1606,168 @@ struct SettingsView: View {
                 }
             }
         }
+        .sheet(isPresented: $showingAddProfile) {
+            ProfileEditView(profile: nil, settingsManager: settingsManager) { newProfile in
+                settingsManager.addProfile(newProfile)
+                loadSettingsFromActiveProfile()
+            }
+        }
+        .sheet(item: $editingProfile) { profile in
+            ProfileEditView(profile: profile, settingsManager: settingsManager) { updatedProfile in
+                settingsManager.updateProfile(updatedProfile)
+                loadSettingsFromActiveProfile()
+            }
+        }
     }
     
-    private var connectionSettings: some View {
-        GroupBox(label: Label("🔗 Подключение к OpenWebUI", systemImage: "network")) {
+    private var profilesSection: some View {
+        GroupBox(label: Label("📁 Профили подключения", systemImage: "folder")) {
             VStack(alignment: .leading, spacing: 12) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("URL API:")
+                HStack {
+                    Text("Активный профиль:")
                         .font(.headline)
-                    HStack {
-                        TextField("https://your-openwebui.com/v1", text: $apiUrl)
-                            .textFieldStyle(.roundedBorder)
-                            .help("Базовый URL вашего OpenWebUI API")
-                            .onChange(of: apiUrl) { _, newValue in
-                                updateCanLoadModels()
-                            }
-                    }
-                }
-                
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("API Token:")
-                        .font(.headline)
-                    SecureField("Ваш API токен", text: $apiToken)
-                        .textFieldStyle(.roundedBorder)
-                        .onChange(of: apiToken) { _, newValue in
-                            updateCanLoadModels()
+                    
+                    Spacer()
+                    
+                    Button(action: { showingAddProfile = true }) {
+                        HStack {
+                            Image(systemName: "plus.circle.fill")
+                            Text("Новый профиль")
                         }
+                        .font(.caption)
+                    }
+                    .buttonStyle(.bordered)
                 }
                 
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Text("Модель для перевода:")
-                            .font(.headline)
+                if settingsManager.connectionProfiles.isEmpty {
+                    VStack(spacing: 8) {
+                        Text("Нет настроенных профилей")
+                            .foregroundColor(.secondary)
                         
-                        Spacer()
-                        
-                        if canLoadModels {
-                            Button(action: loadModels) {
-                                HStack {
-                                    if isLoadingModels {
-                                        ProgressView()
-                                            .scaleEffect(0.7)
-                                            .progressViewStyle(CircularProgressViewStyle())
-                                    } else {
-                                        Image(systemName: "arrow.clockwise")
-                                    }
-                                    Text(isLoadingModels ? "Загружаем..." : "Обновить")
+                        HStack(spacing: 12) {
+                            Button("Создать первый профиль") {
+                                showingAddProfile = true
+                            }
+                            .buttonStyle(.borderedProminent)
+                            
+                            Button("Добавить примеры") {
+                                let examples = settingsManager.createExampleProfiles()
+                                for example in examples {
+                                    settingsManager.addProfile(example)
                                 }
-                                .font(.caption)
+                                if let first = examples.first {
+                                    settingsManager.setActiveProfile(first.id)
+                                    loadSettingsFromActiveProfile()
+                                }
                             }
                             .buttonStyle(.bordered)
-                            .disabled(isLoadingModels)
                         }
                     }
-                    
-                    if availableModels.isEmpty {
-                        HStack {
-                            TextField("Введите название модели", text: Binding(
-                                get: { selectedModelId },
-                                set: { selectedModelId = $0 }
-                            ))
-                            .textFieldStyle(.roundedBorder)
-                            .help("Название модели в вашем OpenWebUI")
-                            
-                            if canLoadModels {
-                                Text("или")
-                                    .foregroundColor(.secondary)
-                                    .font(.caption)
-                            }
-                        }
-                    } else {
-                        Picker("Выберите модель", selection: $selectedModelId) {
-                            Text("Выберите модель...").tag("")
-                            ForEach(availableModels) { model in
-                                Text("\(model.providerIcon) \(model.displayName)")
-                                    .tag(model.id)
-                            }
-                        }
-                        .pickerStyle(MenuPickerStyle())
-                    }
-                    
-                    if !modelsError.isEmpty {
-                        Text(modelsError)
-                            .font(.caption)
-                            .foregroundColor(.red)
-                    }
-                    
-                    if canLoadModels && availableModels.isEmpty && !isLoadingModels && modelsError.isEmpty {
-                        HStack {
-                            Image(systemName: "info.circle.fill")
-                                .foregroundColor(.blue)
-                            Text("Нажмите 'Обновить' для загрузки списка моделей")
-                                .font(.caption)
-                                .foregroundColor(.blue)
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                } else {
+                    LazyVGrid(columns: [
+                        GridItem(.adaptive(minimum: 200))
+                    ], spacing: 12) {
+                        ForEach(settingsManager.connectionProfiles) { profile in
+                            ProfileCard(
+                                profile: profile,
+                                isActive: settingsManager.activeProfileId == profile.id,
+                                onSelect: {
+                                    settingsManager.setActiveProfile(profile.id)
+                                    loadSettingsFromActiveProfile()
+                                },
+                                onEdit: { editingProfile = profile },
+                                onDuplicate: { 
+                                    let newProfile = settingsManager.duplicateProfile(profile)
+                                    settingsManager.setActiveProfile(newProfile.id)
+                                    loadSettingsFromActiveProfile()
+                                },
+                                onDelete: { 
+                                    settingsManager.deleteProfile(profile)
+                                    loadSettingsFromActiveProfile()
+                                }
+                            )
                         }
                     }
                 }
             }
             .padding()
         }
-        .onAppear {
-            updateCanLoadModels()
-        }
     }
     
-    private var generationSettings: some View {
-        GroupBox(label: Label("⚙️ Параметры генерации", systemImage: "slider.horizontal.3")) {
+    private var connectionSettings: some View {
+        GroupBox(label: Label("🔗 Активный профиль", systemImage: "network")) {
             VStack(alignment: .leading, spacing: 12) {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Text("Temperature:")
-                            .font(.headline)
-                        Spacer()
-                        Text(String(format: "%.1f", temperature))
-                            .font(.system(.body, design: .monospaced))
+                if let activeProfile = settingsManager.activeProfile {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text(activeProfile.icon)
+                                .font(.title2)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(activeProfile.name)
+                                    .font(.headline)
+                                Text("API: \(activeProfile.apiUrl)")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(1)
+                                Text("Модель: \(activeProfile.modelName)")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(1)
+                            }
+                            Spacer()
+                            
+                            HStack {
+                                Circle()
+                                    .fill(activeProfile.isConfigured ? Color.green : Color.red)
+                                    .frame(width: 8, height: 8)
+                                Text(activeProfile.isConfigured ? "Готов" : "Не настроен")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        
+                        Divider()
+                        
+                        HStack {
+                            Text("Параметры генерации:")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            Text("Temperature: \(String(format: "%.1f", activeProfile.temperature))")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            Text("•")
+                                .foregroundColor(.secondary)
+                            Text("Max Tokens: \(activeProfile.maxTokens)")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        Text("Для изменения настроек используйте редактор профилей выше")
+                            .font(.caption)
                             .foregroundColor(.blue)
+                            .italic()
                     }
-                    Slider(value: $temperature, in: 0.0...1.0, step: 0.1)
-                    Text("Контролирует креативность перевода (0.0 - точный, 1.0 - творческий)")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Text("Max Tokens:")
-                            .font(.headline)
-                        Spacer()
-                        Text("\(maxTokens)")
-                            .font(.system(.body, design: .monospaced))
-                            .foregroundColor(.blue)
+                } else {
+                    VStack(spacing: 12) {
+                        HStack {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundColor(.orange)
+                            Text("Профиль не выбран")
+                                .font(.headline)
+                                .foregroundColor(.orange)
+                        }
+                        
+                        Text("Создайте или выберите профиль подключения выше")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
                     }
-                    Slider(value: Binding(
-                        get: { Double(maxTokens) },
-                        set: { maxTokens = Int($0) }
-                    ), in: 256...4096, step: 256)
-                    Text("Максимальная длина ответа")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity)
+                    .padding()
                 }
-                
-                Button("Сбросить к значениям по умолчанию") {
-                    temperature = 0.3
-                    maxTokens = 1024
-                }
-                .font(.caption)
-                .buttonStyle(LinkButtonStyle())
             }
             .padding()
         }
@@ -1703,18 +1785,28 @@ struct SettingsView: View {
                         } else {
                             Image(systemName: "network")
                         }
-                        Text(isTestingConnection ? "Тестируем подключение..." : "Тест подключения")
+                        Text(isTestingConnection ? "Тестируем подключение..." : "Тест активного профиля")
                     }
                     .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(apiUrl.isEmpty || apiToken.isEmpty || selectedModelId.isEmpty || isTestingConnection)
+                .disabled(settingsManager.activeProfile == nil || !settingsManager.isConfigured || isTestingConnection)
                 
                 if !testResult.isEmpty {
                     Text(testResult)
                         .font(.caption)
                         .foregroundColor(testResult.contains("✅") ? .green : .red)
                         .multilineTextAlignment(.center)
+                }
+                
+                if settingsManager.activeProfile == nil {
+                    HStack {
+                        Image(systemName: "info.circle.fill")
+                            .foregroundColor(.blue)
+                        Text("Создайте или выберите профиль для тестирования")
+                            .font(.caption)
+                            .foregroundColor(.blue)
+                    }
                 }
             }
             .padding()
@@ -2104,14 +2196,9 @@ struct SettingsView: View {
     }
     
     private func loadSettings() {
-        apiUrl = settingsManager.apiUrl
-        apiToken = settingsManager.apiToken
-        selectedModelId = settingsManager.modelName  // Используем modelName как selectedModelId
-        temperature = settingsManager.temperature
-        maxTokens = settingsManager.maxTokens
+        loadSettingsFromActiveProfile()
         customPrompts = settingsManager.customPrompts
         quickTranslateHotkey = settingsManager.quickTranslateHotkey
-        
         updateCanLoadModels()
         
         // Автоматически загружаем модели если настройки заполнены
@@ -2120,12 +2207,34 @@ struct SettingsView: View {
         }
     }
     
+    private func loadSettingsFromActiveProfile() {
+        if let profile = settingsManager.activeProfile {
+            apiUrl = profile.apiUrl
+            apiToken = profile.apiToken
+            selectedModelId = profile.modelName
+            temperature = profile.temperature
+            maxTokens = profile.maxTokens
+        } else {
+            apiUrl = ""
+            apiToken = ""
+            selectedModelId = ""
+            temperature = 0.3
+            maxTokens = 1024
+        }
+        updateCanLoadModels()
+    }
+    
     private func saveSettings() {
-        settingsManager.apiUrl = apiUrl.trimmingCharacters(in: .whitespacesAndNewlines)
-        settingsManager.apiToken = apiToken.trimmingCharacters(in: .whitespacesAndNewlines)
-        settingsManager.modelName = selectedModelId  // Сохраняем selectedModelId как modelName
-        settingsManager.temperature = temperature
-        settingsManager.maxTokens = maxTokens
+        // Обновляем активный профиль
+        if var profile = settingsManager.activeProfile {
+            profile.apiUrl = apiUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+            profile.apiToken = apiToken.trimmingCharacters(in: .whitespacesAndNewlines)
+            profile.modelName = selectedModelId
+            profile.temperature = temperature
+            profile.maxTokens = maxTokens
+            settingsManager.updateProfile(profile)
+        }
+        
         settingsManager.customPrompts = customPrompts
         
         // Проверяем, изменилась ли горячая клавиша
@@ -2305,6 +2414,285 @@ struct PromptEditView: View {
                 icon = prompt.icon
                 systemPrompt = prompt.systemPrompt
                 userPromptAddition = prompt.userPromptAddition
+            }
+        }
+    }
+}
+
+// MARK: - ProfileCard (Карточка профиля)
+struct ProfileCard: View {
+    let profile: ConnectionProfile
+    let isActive: Bool
+    let onSelect: () -> Void
+    let onEdit: () -> Void
+    let onDuplicate: () -> Void
+    let onDelete: () -> Void
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(profile.icon)
+                    .font(.title2)
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(profile.name)
+                        .font(.headline)
+                        .lineLimit(1)
+                    
+                    Text(profile.modelName.isEmpty ? "Модель не выбрана" : profile.modelName)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+                
+                Spacer()
+                
+                if isActive {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundColor(.green)
+                        .font(.title3)
+                }
+            }
+            
+            HStack {
+                Circle()
+                    .fill(profile.isConfigured ? Color.green : Color.red)
+                    .frame(width: 8, height: 8)
+                
+                Text(profile.isConfigured ? "Настроен" : "Не настроен")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                
+                Spacer()
+                
+                Menu {
+                    Button("Редактировать") {
+                        onEdit()
+                    }
+                    
+                    Button("Дублировать") {
+                        onDuplicate()
+                    }
+                    
+                    Divider()
+                    
+                    Button("Удалить", role: .destructive) {
+                        onDelete()
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .foregroundColor(.secondary)
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+            }
+        }
+        .padding()
+        .background(isActive ? Color.blue.opacity(0.1) : Color(.controlBackgroundColor))
+        .cornerRadius(8)
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(isActive ? Color.blue : Color.clear, lineWidth: 2)
+        )
+        .onTapGesture {
+            onSelect()
+        }
+    }
+}
+
+// MARK: - ProfileEditView (Редактор профилей)
+struct ProfileEditView: View {
+    let profile: ConnectionProfile?
+    let settingsManager: SettingsManager
+    let onSave: (ConnectionProfile) -> Void
+    
+    @State private var name = ""
+    @State private var apiUrl = ""
+    @State private var apiToken = ""
+    @State private var modelName = ""
+    @State private var temperature = 0.3
+    @State private var maxTokens = 1024
+    @State private var icon = "🌐"
+    
+    @State private var isTestingConnection = false
+    @State private var testResult = ""
+    @State private var showingTestResult = false
+    
+    @Environment(\.dismiss) private var dismiss
+    
+    private let availableIcons = ["🌐", "🔗", "🛜", "⚡", "🚀", "💻", "🖥️", "📡", "🌟", "💎", "🔥", "⚙️"]
+    
+    var body: some View {
+        VStack(spacing: 20) {
+            Text(profile == nil ? "Новый профиль подключения" : "Редактировать профиль")
+                .font(.title2)
+                .fontWeight(.bold)
+            
+            Form {
+                Section("Основная информация") {
+                    HStack {
+                        Text("Иконка:")
+                        Picker("", selection: $icon) {
+                            ForEach(availableIcons, id: \.self) { emoji in
+                                Text(emoji).tag(emoji)
+                            }
+                        }
+                        .pickerStyle(SegmentedPickerStyle())
+                    }
+                    
+                    TextField("Название профиля", text: $name)
+                        .help("Например: 'Основной сервер' или 'Локальный Ollama'")
+                }
+                
+                Section("Настройки подключения") {
+                    TextField("URL API", text: $apiUrl)
+                        .help("Например: https://your-openwebui.com/v1")
+                    
+                    SecureField("API Token", text: $apiToken)
+                    
+                    TextField("Модель", text: $modelName)
+                        .help("Например: gpt-4o-mini или llama3.2:latest")
+                }
+                
+                Section("Параметры генерации") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("Temperature:")
+                            Spacer()
+                            Text(String(format: "%.1f", temperature))
+                                .font(.system(.body, design: .monospaced))
+                                .foregroundColor(.blue)
+                        }
+                        Slider(value: $temperature, in: 0.0...1.0, step: 0.1)
+                    }
+                    
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("Max Tokens:")
+                            Spacer()
+                            Text("\(maxTokens)")
+                                .font(.system(.body, design: .monospaced))
+                                .foregroundColor(.blue)
+                        }
+                        Slider(value: Binding(
+                            get: { Double(maxTokens) },
+                            set: { maxTokens = Int($0) }
+                        ), in: 256...4096, step: 256)
+                    }
+                }
+                
+                Section("Тестирование") {
+                    Button(action: testConnection) {
+                        HStack {
+                            if isTestingConnection {
+                                ProgressView()
+                                    .scaleEffect(0.8)
+                                    .progressViewStyle(CircularProgressViewStyle())
+                            } else {
+                                Image(systemName: "network")
+                            }
+                            Text(isTestingConnection ? "Тестируем..." : "Тест подключения")
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(apiUrl.isEmpty || apiToken.isEmpty || modelName.isEmpty || isTestingConnection)
+                    
+                    if !testResult.isEmpty {
+                        Text(testResult)
+                            .font(.caption)
+                            .foregroundColor(testResult.contains("✅") ? .green : .red)
+                            .multilineTextAlignment(.leading)
+                    }
+                }
+            }
+            
+            HStack {
+                Button("Отмена") {
+                    dismiss()
+                }
+                .keyboardShortcut(.escape)
+                
+                Spacer()
+                
+                Button("Сохранить") {
+                    let newProfile = ConnectionProfile(
+                        id: profile?.id ?? UUID().uuidString,
+                        name: name,
+                        apiUrl: apiUrl.trimmingCharacters(in: .whitespacesAndNewlines),
+                        apiToken: apiToken.trimmingCharacters(in: .whitespacesAndNewlines),
+                        modelName: modelName.trimmingCharacters(in: .whitespacesAndNewlines),
+                        temperature: temperature,
+                        maxTokens: maxTokens,
+                        icon: icon
+                    )
+                    onSave(newProfile)
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(name.isEmpty || apiUrl.isEmpty || apiToken.isEmpty || modelName.isEmpty)
+            }
+            .padding()
+        }
+        .padding()
+        .frame(width: 600, height: 700)
+        .onAppear {
+            if let profile = profile {
+                name = profile.name
+                apiUrl = profile.apiUrl
+                apiToken = profile.apiToken
+                modelName = profile.modelName
+                temperature = profile.temperature
+                maxTokens = profile.maxTokens
+                icon = profile.icon
+            } else {
+                // Значения по умолчанию для нового профиля
+                name = "Новый профиль"
+                temperature = 0.3
+                maxTokens = 1024
+                icon = "🌐"
+            }
+        }
+    }
+    
+    private func testConnection() {
+        isTestingConnection = true
+        testResult = ""
+        
+        let tempSettings = SettingsManager()
+        let tempProfile = ConnectionProfile(
+            name: "Test",
+            apiUrl: apiUrl,
+            apiToken: apiToken,
+            modelName: modelName,
+            temperature: temperature,
+            maxTokens: maxTokens
+        )
+        
+        tempSettings.connectionProfiles = [tempProfile]
+        tempSettings.activeProfileId = tempProfile.id
+        
+        let testService = TranslationService()
+        testService.configure(with: tempSettings)
+        
+        Task {
+            do {
+                let result = try await testService.translate(
+                    text: "Hello world",
+                    from: "en",
+                    to: "ru",
+                    customPrompt: nil
+                )
+                
+                await MainActor.run {
+                    testResult = "✅ Подключение успешно!\nТестовый перевод: \(result)"
+                    isTestingConnection = false
+                }
+            } catch {
+                await MainActor.run {
+                    testResult = "❌ Ошибка: \(error.localizedDescription)"
+                    isTestingConnection = false
+                }
             }
         }
     }
@@ -2714,67 +3102,281 @@ struct TranslationPrompt: Identifiable, Codable {
     var userPromptAddition: String
 }
 
-class SettingsManager: ObservableObject {
-    @Published var apiUrl: String = ""
-    @Published var apiToken: String = ""
-    @Published var modelName: String = ""
-    @Published var temperature: Double = 0.3
-    @Published var maxTokens: Int = 1024
-    @Published var customPrompts: [TranslationPrompt] = []
-    @Published var quickTranslateHotkey: String = "⌘⇧T"  // ДОБАВЛЕНО
+// ДОБАВЛЕНО: Структура профиля подключения
+struct ConnectionProfile: Identifiable, Codable {
+    var id: String = UUID().uuidString
+    var name: String
+    var apiUrl: String
+    var apiToken: String
+    var modelName: String
+    var temperature: Double = 0.3
+    var maxTokens: Int = 1024
+    var icon: String = "🌐"
     
     var isConfigured: Bool {
         !apiUrl.isEmpty && !apiToken.isEmpty && !modelName.isEmpty
+    }
+    
+    var displayName: String {
+        return "\(icon) \(name)"
+    }
+}
+
+class SettingsManager: ObservableObject {
+    @Published var connectionProfiles: [ConnectionProfile] = []
+    @Published var activeProfileId: String = ""
+    @Published var customPrompts: [TranslationPrompt] = []
+    @Published var quickTranslateHotkey: String = "⌘⇧T"
+    
+    // Вычисляемые свойства для обратной совместимости
+    var apiUrl: String {
+        get { activeProfile?.apiUrl ?? "" }
+        set { 
+            if var profile = activeProfile {
+                profile.apiUrl = newValue
+                updateActiveProfile(profile)
+            }
+        }
+    }
+    
+    var apiToken: String {
+        get { activeProfile?.apiToken ?? "" }
+        set { 
+            if var profile = activeProfile {
+                profile.apiToken = newValue
+                updateActiveProfile(profile)
+            }
+        }
+    }
+    
+    var modelName: String {
+        get { activeProfile?.modelName ?? "" }
+        set { 
+            if var profile = activeProfile {
+                profile.modelName = newValue
+                updateActiveProfile(profile)
+            }
+        }
+    }
+    
+    var temperature: Double {
+        get { activeProfile?.temperature ?? 0.3 }
+        set { 
+            if var profile = activeProfile {
+                profile.temperature = newValue
+                updateActiveProfile(profile)
+            }
+        }
+    }
+    
+    var maxTokens: Int {
+        get { activeProfile?.maxTokens ?? 1024 }
+        set { 
+            if var profile = activeProfile {
+                profile.maxTokens = newValue
+                updateActiveProfile(profile)
+            }
+        }
+    }
+    
+    var isConfigured: Bool {
+        activeProfile?.isConfigured ?? false
+    }
+    
+    var activeProfile: ConnectionProfile? {
+        get {
+            connectionProfiles.first { $0.id == activeProfileId }
+        }
+        set {
+            if let newProfile = newValue {
+                updateActiveProfile(newProfile)
+            }
+        }
     }
     
     private let userDefaults = UserDefaults.standard
     
     init() {
         loadSettings()
+        migrateOldSettings()
+    }
+    
+    private func updateActiveProfile(_ profile: ConnectionProfile) {
+        if let index = connectionProfiles.firstIndex(where: { $0.id == profile.id }) {
+            connectionProfiles[index] = profile
+        }
     }
     
     func loadSettings() {
-        apiUrl = userDefaults.string(forKey: "apiUrl") ?? ""
-        apiToken = userDefaults.string(forKey: "apiToken") ?? ""
-        modelName = userDefaults.string(forKey: "modelName") ?? ""
+        // Загружаем профили
+        if let profilesData = userDefaults.data(forKey: "connectionProfiles"),
+           let decodedProfiles = try? JSONDecoder().decode([ConnectionProfile].self, from: profilesData) {
+            connectionProfiles = decodedProfiles
+        }
         
-        let savedTemperature = userDefaults.double(forKey: "temperature")
-        temperature = savedTemperature == 0 ? 0.3 : savedTemperature
+        activeProfileId = userDefaults.string(forKey: "activeProfileId") ?? ""
         
-        let savedMaxTokens = userDefaults.integer(forKey: "maxTokens")
-        maxTokens = savedMaxTokens == 0 ? 1024 : savedMaxTokens
+        // Если нет активного профиля, но есть профили, выбираем первый
+        if activeProfileId.isEmpty && !connectionProfiles.isEmpty {
+            activeProfileId = connectionProfiles.first!.id
+        }
         
         if let promptsData = userDefaults.data(forKey: "customPrompts"),
            let decodedPrompts = try? JSONDecoder().decode([TranslationPrompt].self, from: promptsData) {
             customPrompts = decodedPrompts
         }
         
-        quickTranslateHotkey = userDefaults.string(forKey: "quickTranslateHotkey") ?? "⌘⇧T"  // ДОБАВЛЕНО
+        quickTranslateHotkey = userDefaults.string(forKey: "quickTranslateHotkey") ?? "⌘⇧T"
     }
     
     func saveSettings() {
-        userDefaults.set(apiUrl, forKey: "apiUrl")
-        userDefaults.set(apiToken, forKey: "apiToken")
-        userDefaults.set(modelName, forKey: "modelName")
-        userDefaults.set(temperature, forKey: "temperature")
-        userDefaults.set(maxTokens, forKey: "maxTokens")
+        // Сохраняем профили
+        if let encodedProfiles = try? JSONEncoder().encode(connectionProfiles) {
+            userDefaults.set(encodedProfiles, forKey: "connectionProfiles")
+        }
+        
+        userDefaults.set(activeProfileId, forKey: "activeProfileId")
         
         if let encodedPrompts = try? JSONEncoder().encode(customPrompts) {
             userDefaults.set(encodedPrompts, forKey: "customPrompts")
         }
         
-        userDefaults.set(quickTranslateHotkey, forKey: "quickTranslateHotkey")  // ДОБАВЛЕНО
+        userDefaults.set(quickTranslateHotkey, forKey: "quickTranslateHotkey")
+    }
+    
+    // Миграция старых настроек в профили
+    private func migrateOldSettings() {
+        let oldApiUrl = userDefaults.string(forKey: "apiUrl") ?? ""
+        let oldApiToken = userDefaults.string(forKey: "apiToken") ?? ""
+        let oldModelName = userDefaults.string(forKey: "modelName") ?? ""
+        
+        // Если есть старые настройки и нет профилей, создаем профиль по умолчанию
+        if !oldApiUrl.isEmpty && !oldApiToken.isEmpty && !oldModelName.isEmpty && connectionProfiles.isEmpty {
+            let savedTemperature = userDefaults.double(forKey: "temperature")
+            let temperature = savedTemperature == 0 ? 0.3 : savedTemperature
+            
+            let savedMaxTokens = userDefaults.integer(forKey: "maxTokens")
+            let maxTokens = savedMaxTokens == 0 ? 1024 : savedMaxTokens
+            
+            let defaultProfile = ConnectionProfile(
+                name: "Основной профиль",
+                apiUrl: oldApiUrl,
+                apiToken: oldApiToken,
+                modelName: oldModelName,
+                temperature: temperature,
+                maxTokens: maxTokens,
+                icon: "🌐"
+            )
+            
+            connectionProfiles = [defaultProfile]
+            activeProfileId = defaultProfile.id
+            
+            // Удаляем старые ключи
+            userDefaults.removeObject(forKey: "apiUrl")
+            userDefaults.removeObject(forKey: "apiToken") 
+            userDefaults.removeObject(forKey: "modelName")
+            userDefaults.removeObject(forKey: "temperature")
+            userDefaults.removeObject(forKey: "maxTokens")
+            
+            saveSettings()
+        }
+    }
+    
+    // MARK: - Методы для работы с профилями
+    
+    func addProfile(_ profile: ConnectionProfile) {
+        connectionProfiles.append(profile)
+        saveSettings()
+    }
+    
+    func updateProfile(_ profile: ConnectionProfile) {
+        if let index = connectionProfiles.firstIndex(where: { $0.id == profile.id }) {
+            connectionProfiles[index] = profile
+            saveSettings()
+        }
+    }
+    
+    func deleteProfile(_ profile: ConnectionProfile) {
+        connectionProfiles.removeAll { $0.id == profile.id }
+        
+        // Если удаляем активный профиль, выбираем другой
+        if activeProfileId == profile.id {
+            activeProfileId = connectionProfiles.first?.id ?? ""
+        }
+        
+        saveSettings()
+    }
+    
+    func setActiveProfile(_ profileId: String) {
+        if connectionProfiles.contains(where: { $0.id == profileId }) {
+            activeProfileId = profileId
+            saveSettings()
+        }
+    }
+    
+    func duplicateProfile(_ profile: ConnectionProfile) -> ConnectionProfile {
+        let newProfile = ConnectionProfile(
+            name: "\(profile.name) (Копия)",
+            apiUrl: profile.apiUrl,
+            apiToken: profile.apiToken,
+            modelName: profile.modelName,
+            temperature: profile.temperature,
+            maxTokens: profile.maxTokens,
+            icon: profile.icon
+        )
+        addProfile(newProfile)
+        return newProfile
     }
     
     func resetToDefaults() {
-        apiUrl = ""
-        apiToken = ""
-        modelName = ""
-        temperature = 0.3
-        maxTokens = 1024
+        connectionProfiles = []
+        activeProfileId = ""
         customPrompts = []
-        quickTranslateHotkey = "⌘⇧T"  // ДОБАВЛЕНО
+        quickTranslateHotkey = "⌘⇧T"
         saveSettings()
+    }
+    
+    // MARK: - Примеры профилей
+    
+    func createExampleProfiles() -> [ConnectionProfile] {
+        return [
+            ConnectionProfile(
+                name: "OpenAI GPT-4",
+                apiUrl: "https://api.openai.com/v1",
+                apiToken: "",
+                modelName: "gpt-4o-mini",
+                temperature: 0.3,
+                maxTokens: 1024,
+                icon: "🤖"
+            ),
+            ConnectionProfile(
+                name: "Локальный Ollama",
+                apiUrl: "http://localhost:11434/v1",
+                apiToken: "ollama",
+                modelName: "llama3.2:latest",
+                temperature: 0.3,
+                maxTokens: 1024,
+                icon: "🦙"
+            ),
+            ConnectionProfile(
+                name: "Claude (Anthropic)",
+                apiUrl: "https://api.anthropic.com/v1",
+                apiToken: "",
+                modelName: "claude-3-haiku-20240307",
+                temperature: 0.3,
+                maxTokens: 1024,
+                icon: "🧠"
+            ),
+            ConnectionProfile(
+                name: "OpenRouter",
+                apiUrl: "https://openrouter.ai/api/v1",
+                apiToken: "",
+                modelName: "meta-llama/llama-3.2-3b-instruct:free",
+                temperature: 0.3,
+                maxTokens: 1024,
+                icon: "🚀"
+            )
+        ]
     }
 }
 
