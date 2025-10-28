@@ -1181,9 +1181,9 @@ struct CompactContentView: View {
                         }
                         .buttonStyle(PlainButtonStyle())
                     }
-                    Text("\(inputText.count)/1000")
+                    Text("\(inputText.count)/5000")
                         .font(.caption2)
-                        .foregroundColor(inputText.count > 900 ? .red : .secondary)
+                        .foregroundColor(inputText.count > 4500 ? .red : .secondary)
                 }
                 
                 TextEditor(text: $inputText)
@@ -1193,8 +1193,8 @@ struct CompactContentView: View {
                     .cornerRadius(6)
                     .frame(minHeight: 80, maxHeight: 120)
                     .onChange(of: inputText) { _, newValue in
-                        if newValue.count > 1000 {
-                            inputText = String(newValue.prefix(1000))
+                        if newValue.count > 5000 {
+                            inputText = String(newValue.prefix(5000))
                         }
                     }
             }
@@ -1428,7 +1428,7 @@ struct SettingsView: View {
     
     @State private var apiUrl = ""
     @State private var apiToken = ""
-    @State private var modelName = ""
+    @State private var selectedModelId = ""
     @State private var temperature = 0.3
     @State private var maxTokens = 1024
     @State private var isTestingConnection = false
@@ -1440,6 +1440,13 @@ struct SettingsView: View {
     @State private var customPrompts: [TranslationPrompt] = []
     @State private var showingAddPrompt = false
     @State private var editingPrompt: TranslationPrompt?
+    
+    // ДОБАВЛЕНО: для работы с моделями
+    @StateObject private var modelService = ModelService()
+    @State private var availableModels: [OpenWebUIModel] = []
+    @State private var isLoadingModels = false
+    @State private var modelsError: String = ""
+    @State private var canLoadModels = false
     
     // ДОБАВЛЕНО: для настройки горячих клавиш
     @State private var quickTranslateHotkey = "⌘⇧T"
@@ -1473,7 +1480,7 @@ struct SettingsView: View {
                         onClose?() ?? dismiss()
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(apiUrl.isEmpty || apiToken.isEmpty || modelName.isEmpty)
+                    .disabled(apiUrl.isEmpty || apiToken.isEmpty || selectedModelId.isEmpty)
                     .keyboardShortcut(.defaultAction)
                 }
             }
@@ -1541,9 +1548,14 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("URL API:")
                         .font(.headline)
-                    TextField("https://your-openwebui.com/v1", text: $apiUrl)
-                        .textFieldStyle(.roundedBorder)
-                        .help("Базовый URL вашего OpenWebUI API")
+                    HStack {
+                        TextField("https://your-openwebui.com/v1", text: $apiUrl)
+                            .textFieldStyle(.roundedBorder)
+                            .help("Базовый URL вашего OpenWebUI API")
+                            .onChange(of: apiUrl) { _, newValue in
+                                updateCanLoadModels()
+                            }
+                    }
                 }
                 
                 VStack(alignment: .leading, spacing: 8) {
@@ -1551,17 +1563,84 @@ struct SettingsView: View {
                         .font(.headline)
                     SecureField("Ваш API токен", text: $apiToken)
                         .textFieldStyle(.roundedBorder)
+                        .onChange(of: apiToken) { _, newValue in
+                            updateCanLoadModels()
+                        }
                 }
                 
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Модель для перевода:")
-                        .font(.headline)
-                    TextField("gpt-4, claude-3-sonnet, llama2 и т.д.", text: $modelName)
-                        .textFieldStyle(.roundedBorder)
-                        .help("Название модели в вашем OpenWebUI")
+                    HStack {
+                        Text("Модель для перевода:")
+                            .font(.headline)
+                        
+                        Spacer()
+                        
+                        if canLoadModels {
+                            Button(action: loadModels) {
+                                HStack {
+                                    if isLoadingModels {
+                                        ProgressView()
+                                            .scaleEffect(0.7)
+                                            .progressViewStyle(CircularProgressViewStyle())
+                                    } else {
+                                        Image(systemName: "arrow.clockwise")
+                                    }
+                                    Text(isLoadingModels ? "Загружаем..." : "Обновить")
+                                }
+                                .font(.caption)
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(isLoadingModels)
+                        }
+                    }
+                    
+                    if availableModels.isEmpty {
+                        HStack {
+                            TextField("Введите название модели", text: Binding(
+                                get: { selectedModelId },
+                                set: { selectedModelId = $0 }
+                            ))
+                            .textFieldStyle(.roundedBorder)
+                            .help("Название модели в вашем OpenWebUI")
+                            
+                            if canLoadModels {
+                                Text("или")
+                                    .foregroundColor(.secondary)
+                                    .font(.caption)
+                            }
+                        }
+                    } else {
+                        Picker("Выберите модель", selection: $selectedModelId) {
+                            Text("Выберите модель...").tag("")
+                            ForEach(availableModels) { model in
+                                Text("\(model.providerIcon) \(model.displayName)")
+                                    .tag(model.id)
+                            }
+                        }
+                        .pickerStyle(MenuPickerStyle())
+                    }
+                    
+                    if !modelsError.isEmpty {
+                        Text(modelsError)
+                            .font(.caption)
+                            .foregroundColor(.red)
+                    }
+                    
+                    if canLoadModels && availableModels.isEmpty && !isLoadingModels && modelsError.isEmpty {
+                        HStack {
+                            Image(systemName: "info.circle.fill")
+                                .foregroundColor(.blue)
+                            Text("Нажмите 'Обновить' для загрузки списка моделей")
+                                .font(.caption)
+                                .foregroundColor(.blue)
+                        }
+                    }
                 }
             }
             .padding()
+        }
+        .onAppear {
+            updateCanLoadModels()
         }
     }
     
@@ -1629,7 +1708,7 @@ struct SettingsView: View {
                     .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(apiUrl.isEmpty || apiToken.isEmpty || modelName.isEmpty || isTestingConnection)
+                .disabled(apiUrl.isEmpty || apiToken.isEmpty || selectedModelId.isEmpty || isTestingConnection)
                 
                 if !testResult.isEmpty {
                     Text(testResult)
@@ -1980,23 +2059,71 @@ struct SettingsView: View {
         "Перейдите в Settings → Account → API Keys",
         "Нажмите 'Create new API key'",
         "Скопируйте созданный ключ",
-        "URL обычно имеет вид: https://your-domain.com/v1"
+        "URL обычно имеет вид: https://your-domain.com/v1",
+        "Нажмите 'Обновить' для загрузки списка доступных моделей"
     ]
+    
+    private func updateCanLoadModels() {
+        canLoadModels = !apiUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && 
+                       !apiToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if canLoadModels {
+            modelsError = ""
+        }
+    }
+    
+    private func loadModels() {
+        guard canLoadModels else { return }
+        
+        isLoadingModels = true
+        modelsError = ""
+        
+        Task {
+            do {
+                let models = try await modelService.fetchAvailableModels(
+                    apiUrl: apiUrl.trimmingCharacters(in: .whitespacesAndNewlines),
+                    apiToken: apiToken.trimmingCharacters(in: .whitespacesAndNewlines)
+                )
+                
+                await MainActor.run {
+                    self.availableModels = models
+                    self.isLoadingModels = false
+                    
+                    // Если текущая модель не найдена в списке, сбрасываем выбор
+                    if !selectedModelId.isEmpty && !models.contains(where: { $0.id == selectedModelId }) {
+                        selectedModelId = ""
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    self.modelsError = "Ошибка загрузки моделей: \(error.localizedDescription)"
+                    self.isLoadingModels = false
+                    self.availableModels = []
+                }
+            }
+        }
+    }
     
     private func loadSettings() {
         apiUrl = settingsManager.apiUrl
         apiToken = settingsManager.apiToken
-        modelName = settingsManager.modelName
+        selectedModelId = settingsManager.modelName  // Используем modelName как selectedModelId
         temperature = settingsManager.temperature
         maxTokens = settingsManager.maxTokens
         customPrompts = settingsManager.customPrompts
         quickTranslateHotkey = settingsManager.quickTranslateHotkey
+        
+        updateCanLoadModels()
+        
+        // Автоматически загружаем модели если настройки заполнены
+        if canLoadModels {
+            loadModels()
+        }
     }
     
     private func saveSettings() {
         settingsManager.apiUrl = apiUrl.trimmingCharacters(in: .whitespacesAndNewlines)
         settingsManager.apiToken = apiToken.trimmingCharacters(in: .whitespacesAndNewlines)
-        settingsManager.modelName = modelName.trimmingCharacters(in: .whitespacesAndNewlines)
+        settingsManager.modelName = selectedModelId  // Сохраняем selectedModelId как modelName
         settingsManager.temperature = temperature
         settingsManager.maxTokens = maxTokens
         settingsManager.customPrompts = customPrompts
@@ -2057,7 +2184,7 @@ struct SettingsView: View {
         let tempSettings = SettingsManager()
         tempSettings.apiUrl = apiUrl
         tempSettings.apiToken = apiToken
-        tempSettings.modelName = modelName
+        tempSettings.modelName = selectedModelId
         tempSettings.temperature = temperature
         tempSettings.maxTokens = maxTokens
         
@@ -2178,6 +2305,226 @@ struct PromptEditView: View {
                 icon = prompt.icon
                 systemPrompt = prompt.systemPrompt
                 userPromptAddition = prompt.userPromptAddition
+            }
+        }
+    }
+}
+
+// MARK: - ModelService.swift (Сервис для работы с моделями)
+import Foundation
+
+struct OpenWebUIModel: Codable, Identifiable {
+    let id: String
+    let name: String?
+    let object: String?
+    let owned_by: String?
+    let created: Int?
+    
+    // Дополнительные поля для Ollama
+    let ollama: OllamaInfo?
+    let connection_type: String?
+    let tags: [String]?
+    let actions: [String]?
+    let filters: [String]?
+    let arena: Bool?
+    let info: ModelInfo?
+    
+    // Альтернативные поля, которые могут присутствовать
+    let model: String?
+    
+    var displayName: String {
+        // Сначала пробуем name, потом id
+        let modelName = name ?? model ?? id
+        
+        // Показываем более читаемое имя, убирая префиксы провайдеров
+        let cleanName = modelName
+            .replacingOccurrences(of: "ollama:", with: "")
+            .replacingOccurrences(of: "openai:", with: "")
+            .replacingOccurrences(of: "anthropic:", with: "")
+            .replacingOccurrences(of: "google:", with: "")
+        return cleanName.isEmpty ? id : cleanName
+    }
+    
+    var providerIcon: String {
+        let modelName = name ?? model ?? id
+        
+        if modelName.contains("gpt") || modelName.contains("openai") {
+            return "🤖"
+        } else if modelName.contains("claude") || modelName.contains("anthropic") {
+            return "🧠"
+        } else if modelName.contains("gemini") || modelName.contains("google") || modelName.contains("gemma") {
+            return "💎"
+        } else if modelName.contains("llama") {
+            return "🦙"
+        } else if modelName.contains("mistral") {
+            return "🌪️"
+        } else if modelName.contains("phi") {
+            return "🔬"
+        } else if modelName.contains("qwen") {
+            return "🐧"
+        } else if modelName.contains("arena") {
+            return "🏟️"
+        } else if owned_by == "ollama" || connection_type == "local" {
+            return "🦙"  // Ollama models
+        } else {
+            return "⚡"
+        }
+    }
+}
+
+// Дополнительные структуры для поддержки полного формата Ollama
+struct OllamaInfo: Codable {
+    let name: String?
+    let model: String?
+    let modified_at: String?
+    let size: Int?
+    let digest: String?
+    let details: ModelDetails?
+    let connection_type: String?
+    let urls: [Int]?
+    let expires_at: Int?
+}
+
+struct ModelDetails: Codable {
+    let parent_model: String?
+    let format: String?
+    let family: String?
+    let families: [String]?
+    let parameter_size: String?
+    let quantization_level: String?
+}
+
+struct ModelInfo: Codable {
+    let meta: ModelMeta?
+}
+
+struct ModelMeta: Codable {
+    let profile_image_url: String?
+    let description: String?
+    let model_ids: [String]?
+}
+
+struct ModelsResponse: Codable {
+    let data: [OpenWebUIModel]
+    let object: String?  // Делаем опциональным
+}
+
+// Альтернативный формат ответа (если сервер возвращает массив напрямую)
+struct DirectModelsResponse: Codable {
+    let models: [OpenWebUIModel]
+}
+
+// Еще один возможный формат (просто массив моделей)
+typealias ModelsArrayResponse = [OpenWebUIModel]
+
+class ModelService: ObservableObject {
+    private var session: URLSession
+    
+    init() {
+        let configuration = URLSessionConfiguration.default
+        configuration.timeoutIntervalForRequest = 30
+        configuration.timeoutIntervalForResource = 60
+        self.session = URLSession(configuration: configuration)
+    }
+    
+    func fetchAvailableModels(apiUrl: String, apiToken: String) async throws -> [OpenWebUIModel] {
+        var urlString = apiUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // Убираем завершающий слеш если есть
+        if urlString.hasSuffix("/") {
+            urlString = String(urlString.dropLast())
+        }
+        
+        // Формируем правильный URL для моделей
+        if urlString.hasSuffix("/api") {
+            urlString += "/v1/models"
+        } else if urlString.hasSuffix("/api/v1") {
+            urlString += "/models"
+        } else if urlString.contains("/api/v1/chat/completions") {
+            urlString = urlString.replacingOccurrences(of: "/chat/completions", with: "/models")
+        } else if !urlString.contains("/models") {
+            // Если URL не содержит нужный путь, добавляем стандартный
+            if urlString.contains("/api") && !urlString.contains("/v1") {
+                urlString += "/v1/models"
+            } else if urlString.contains("/v1") {
+                urlString += "/models"
+            } else {
+                urlString += "/api/v1/models"
+            }
+        }
+        
+        print("Запрос моделей по URL: \(urlString)") // Для отладки
+        
+        guard let url = URL(string: urlString) else {
+            throw TranslationError.invalidURL
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(apiToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("AI-Translator/1.0", forHTTPHeaderField: "User-Agent")
+        
+        let (data, response) = try await session.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw TranslationError.networkError
+        }
+        
+        print("HTTP Status Code: \(httpResponse.statusCode)") // Для отладки
+        print("Response headers: \(httpResponse.allHeaderFields)") // Для отладки
+        
+        if httpResponse.statusCode != 200 {
+            let responseString = String(data: data, encoding: .utf8) ?? "No response body"
+            print("Error response: \(responseString)") // Для отладки
+            
+            if let errorData = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                if let detail = errorData["detail"] as? String {
+                    throw TranslationError.apiError(detail)
+                } else if let error = errorData["error"] as? [String: Any],
+                          let message = error["message"] as? String {
+                    throw TranslationError.apiError(message)
+                }
+            }
+            throw TranslationError.httpError(httpResponse.statusCode)
+        }
+        
+        // Добавляем отладку ответа
+        let responseString = String(data: data, encoding: .utf8) ?? "No response body"
+        print("Response data: \(responseString)") // Для отладки
+        
+        do {
+            // Пробуем стандартный формат OpenAI API
+            let modelsResponse = try JSONDecoder().decode(ModelsResponse.self, from: data)
+            print("✅ Successfully parsed \(modelsResponse.data.count) models using standard format")
+            let models = modelsResponse.data.sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+            for model in models {
+                print("Model: \(model.id) -> \(model.displayName) (\(model.providerIcon))")
+            }
+            return models
+        } catch {
+            print("❌ Standard format failed: \(error)")
+            print("Trying alternative formats...")
+            
+            // Пробуем формат с полем "models"
+            do {
+                let directResponse = try JSONDecoder().decode(DirectModelsResponse.self, from: data)
+                print("✅ Successfully parsed \(directResponse.models.count) models using direct format")
+                return directResponse.models.sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+            } catch {
+                print("❌ Direct format failed: \(error)")
+                print("Trying array format...")
+                
+                // Пробуем простой массив моделей
+                do {
+                    let arrayResponse = try JSONDecoder().decode(ModelsArrayResponse.self, from: data)
+                    print("✅ Successfully parsed \(arrayResponse.count) models using array format")
+                    return arrayResponse.sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+                } catch {
+                    print("❌ All JSON decode attempts failed")
+                    print("Final decode error: \(error)")
+                    throw TranslationError.invalidResponse
+                }
             }
         }
     }
