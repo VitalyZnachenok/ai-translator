@@ -365,8 +365,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
     
     @objc private func quickTranslateFromClipboard() {
+        print("🔥 quickTranslateFromClipboard called")
+        
         // Сохраняем текущее содержимое буфера
         let oldClipboard = NSPasteboard.general.string(forType: .string)
+        print("📋 Old clipboard: \(oldClipboard?.prefix(50) ?? "nil")")
         
         // Очищаем буфер обмена
         NSPasteboard.general.clearContents()
@@ -380,6 +383,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             
             // Получаем скопированный текст
             guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else {
+                print("❌ No text copied from selection")
                 // Восстанавливаем старый буфер если ничего не скопировалось
                 if let oldText = oldClipboard {
                     NSPasteboard.general.clearContents()
@@ -395,19 +399,32 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 return
             }
             
+            print("✅ Text copied: \(text.prefix(50))")
+            
+            // ИСПРАВЛЕНИЕ: Сохраняем текст ПЕРЕД открытием окна
+            UserDefaults.standard.set(text, forKey: "pendingTranslationText")
+            UserDefaults.standard.synchronize() // Принудительно сохраняем
+            print("💾 Text saved to UserDefaults")
+            
             // Открываем главное окно
             self.showMainWindow()
+            print("🪟 Main window shown")
             
-            // Отправляем текст для перевода
-            UserDefaults.standard.set(text, forKey: "pendingTranslationText")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                NotificationCenter.default.post(name: Notification.Name("QuickTranslateText"), object: nil)
+            // Отправляем уведомление с увеличенной задержкой для гарантии загрузки view
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                print("📤 Posting QuickTranslateText notification")
+                NotificationCenter.default.post(
+                    name: Notification.Name("QuickTranslateText"), 
+                    object: nil,
+                    userInfo: ["text": text] // ДОБАВЛЕНО: передаем текст в userInfo
+                )
                 
                 // Восстанавливаем старый буфер обмена после небольшой задержки
                 if let oldText = oldClipboard, oldText != text {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(oldText, forType: .string)
+                        print("♻️ Old clipboard restored")
                     }
                 }
             }
@@ -461,12 +478,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
     
     @objc func showMainWindow() {
+        print("🪟 showMainWindow called")
+        
         if let existingWindow = mainWindow, existingWindow.isVisible {
+            print("✅ Using existing window")
             existingWindow.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             return
         }
         
+        print("🆕 Creating new window")
         closePopover()
         
         let newWindow = NSWindow(
@@ -493,6 +514,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+        
+        print("✅ Window created and shown")
     }
     
     @objc func showSettings() {
@@ -996,16 +1019,36 @@ struct ContentView: View {
             forName: Notification.Name("QuickTranslateText"),
             object: nil,
             queue: .main
-        ) { _ in
-            if let text = UserDefaults.standard.string(forKey: "pendingTranslationText") {
-                self.inputText = text
+        ) { notification in
+            print("📥 QuickTranslateText notification received in ContentView")
+            
+            // ИСПРАВЛЕНИЕ: Получаем текст из userInfo или UserDefaults
+            var text: String?
+            
+            if let userInfoText = notification.userInfo?["text"] as? String {
+                text = userInfoText
+                print("✅ Text from userInfo: \(userInfoText.prefix(50))")
+            } else if let defaultsText = UserDefaults.standard.string(forKey: "pendingTranslationText") {
+                text = defaultsText
+                print("✅ Text from UserDefaults: \(defaultsText.prefix(50))")
                 UserDefaults.standard.removeObject(forKey: "pendingTranslationText")
-                
-                if self.settingsManager.isConfigured {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                        self.translateText()
-                    }
+            }
+            
+            guard let finalText = text, !finalText.isEmpty else {
+                print("❌ No text found in notification")
+                return
+            }
+            
+            self.inputText = finalText
+            print("✅ Input text set: \(finalText.prefix(50))")
+            
+            if self.settingsManager.isConfigured {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    print("🚀 Starting translation...")
+                    self.translateText()
                 }
+            } else {
+                print("⚠️ Settings not configured")
             }
         }
     }
@@ -1393,16 +1436,36 @@ struct CompactContentView: View {
             forName: Notification.Name("QuickTranslateText"),
             object: nil,
             queue: .main
-        ) { _ in
-            if let text = UserDefaults.standard.string(forKey: "pendingTranslationText") {
-                self.inputText = text
+        ) { notification in
+            print("📥 QuickTranslateText notification received in CompactContentView")
+            
+            // ИСПРАВЛЕНИЕ: Получаем текст из userInfo или UserDefaults
+            var text: String?
+            
+            if let userInfoText = notification.userInfo?["text"] as? String {
+                text = userInfoText
+                print("✅ Text from userInfo: \(userInfoText.prefix(50))")
+            } else if let defaultsText = UserDefaults.standard.string(forKey: "pendingTranslationText") {
+                text = defaultsText
+                print("✅ Text from UserDefaults: \(defaultsText.prefix(50))")
                 UserDefaults.standard.removeObject(forKey: "pendingTranslationText")
-                
-                if self.settingsManager.isConfigured {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                        self.translateText()
-                    }
+            }
+            
+            guard let finalText = text, !finalText.isEmpty else {
+                print("❌ No text found in notification")
+                return
+            }
+            
+            self.inputText = finalText
+            print("✅ Input text set: \(finalText.prefix(50))")
+            
+            if self.settingsManager.isConfigured {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    print("🚀 Starting translation...")
+                    self.translateText()
                 }
+            } else {
+                print("⚠️ Settings not configured")
             }
         }
     }
