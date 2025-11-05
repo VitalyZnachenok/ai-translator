@@ -6,7 +6,36 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		D817B5EC2EB9F785004B48B3 /* ModelsConnectionProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = D817B5EB2EB9F785004B48B3 /* ModelsConnectionProfile.swift */; };
+		D817B5EE2EB9F78A004B48B3 /* ModelsTranslationPrompt.swift in Sources */ = {isa = PBXBuildFile; fileRef = D817B5ED2EB9F78A004B48B3 /* ModelsTranslationPrompt.swift */; };
+		D817B5F02EB9F793004B48B3 /* ModelsTranslationError.swift in Sources */ = {isa = PBXBuildFile; fileRef = D817B5EF2EB9F793004B48B3 /* ModelsTranslationError.swift */; };
+		D817B5F22EB9F7A6004B48B3 /* ModelsOpenWebUIModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D817B5F12EB9F7A6004B48B3 /* ModelsOpenWebUIModel.swift */; };
+		D817B5F42EB9F7B7004B48B3 /* UtilitiesKeyCodeMapper.swift in Sources */ = {isa = PBXBuildFile; fileRef = D817B5F32EB9F7B7004B48B3 /* UtilitiesKeyCodeMapper.swift */; };
+		D817B5F62EB9F7BE004B48B3 /* UtilitiesButtonStyles.swift in Sources */ = {isa = PBXBuildFile; fileRef = D817B5F52EB9F7BE004B48B3 /* UtilitiesButtonStyles.swift */; };
+		D817B5F82EB9F7D3004B48B3 /* ServicesModelService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D817B5F72EB9F7D3004B48B3 /* ServicesModelService.swift */; };
+		D817B5FA2EB9F7EE004B48B3 /* ServicesTranslationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D817B5F92EB9F7EE004B48B3 /* ServicesTranslationService.swift */; };
+		D817B5FC2EB9F809004B48B3 /* ManagersSettingsManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D817B5FB2EB9F809004B48B3 /* ManagersSettingsManager.swift */; };
+		D817B5FE2EB9F80F004B48B3 /* AppAI_TranslatorApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = D817B5FD2EB9F80F004B48B3 /* AppAI_TranslatorApp.swift */; };
+		D817B6002EB9F83A004B48B3 /* AppAppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = D817B5FF2EB9F83A004B48B3 /* AppAppDelegate.swift */; };
+		D817B6022EB9F85F004B48B3 /* AppAppDelegate+Hotkeys.swift in Sources */ = {isa = PBXBuildFile; fileRef = D817B6012EB9F85F004B48B3 /* AppAppDelegate+Hotkeys.swift */; };
+		D817B6042EB9F86B004B48B3 /* UtilitiesLanguageData.swift in Sources */ = {isa = PBXBuildFile; fileRef = D817B6032EB9F86B004B48B3 /* UtilitiesLanguageData.swift */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
+		D817B5EB2EB9F785004B48B3 /* ModelsConnectionProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelsConnectionProfile.swift; sourceTree = "<group>"; };
+		D817B5ED2EB9F78A004B48B3 /* ModelsTranslationPrompt.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelsTranslationPrompt.swift; sourceTree = "<group>"; };
+		D817B5EF2EB9F793004B48B3 /* ModelsTranslationError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelsTranslationError.swift; sourceTree = "<group>"; };
+		D817B5F12EB9F7A6004B48B3 /* ModelsOpenWebUIModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelsOpenWebUIModel.swift; sourceTree = "<group>"; };
+		D817B5F32EB9F7B7004B48B3 /* UtilitiesKeyCodeMapper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UtilitiesKeyCodeMapper.swift; sourceTree = "<group>"; };
+		D817B5F52EB9F7BE004B48B3 /* UtilitiesButtonStyles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UtilitiesButtonStyles.swift; sourceTree = "<group>"; };
+		D817B5F72EB9F7D3004B48B3 /* ServicesModelService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServicesModelService.swift; sourceTree = "<group>"; };
+		D817B5F92EB9F7EE004B48B3 /* ServicesTranslationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServicesTranslationService.swift; sourceTree = "<group>"; };
+		D817B5FB2EB9F809004B48B3 /* ManagersSettingsManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagersSettingsManager.swift; sourceTree = "<group>"; };
+		D817B5FD2EB9F80F004B48B3 /* AppAI_TranslatorApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppAI_TranslatorApp.swift; sourceTree = "<group>"; };
+		D817B5FF2EB9F83A004B48B3 /* AppAppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppAppDelegate.swift; sourceTree = "<group>"; };
+		D817B6012EB9F85F004B48B3 /* AppAppDelegate+Hotkeys.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppAppDelegate+Hotkeys.swift"; sourceTree = "<group>"; };
+		D817B6032EB9F86B004B48B3 /* UtilitiesLanguageData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UtilitiesLanguageData.swift; sourceTree = "<group>"; };
 		D8E316812E4232F10003F8B5 /* AI Translator.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "AI Translator.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -34,6 +63,19 @@
 			children = (
 				D8E316832E4232F10003F8B5 /* AI Translator */,
 				D8E316822E4232F10003F8B5 /* Products */,
+				D817B5EB2EB9F785004B48B3 /* ModelsConnectionProfile.swift */,
+				D817B5ED2EB9F78A004B48B3 /* ModelsTranslationPrompt.swift */,
+				D817B5EF2EB9F793004B48B3 /* ModelsTranslationError.swift */,
+				D817B5F12EB9F7A6004B48B3 /* ModelsOpenWebUIModel.swift */,
+				D817B5F32EB9F7B7004B48B3 /* UtilitiesKeyCodeMapper.swift */,
+				D817B5F52EB9F7BE004B48B3 /* UtilitiesButtonStyles.swift */,
+				D817B5F72EB9F7D3004B48B3 /* ServicesModelService.swift */,
+				D817B5F92EB9F7EE004B48B3 /* ServicesTranslationService.swift */,
+				D817B5FB2EB9F809004B48B3 /* ManagersSettingsManager.swift */,
+				D817B5FD2EB9F80F004B48B3 /* AppAI_TranslatorApp.swift */,
+				D817B5FF2EB9F83A004B48B3 /* AppAppDelegate.swift */,
+				D817B6012EB9F85F004B48B3 /* AppAppDelegate+Hotkeys.swift */,
+				D817B6032EB9F86B004B48B3 /* UtilitiesLanguageData.swift */,
 			);
 			sourceTree = "<group>";
 		};
@@ -123,6 +165,19 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				D817B5F02EB9F793004B48B3 /* ModelsTranslationError.swift in Sources */,
+				D817B5F62EB9F7BE004B48B3 /* UtilitiesButtonStyles.swift in Sources */,
+				D817B5FE2EB9F80F004B48B3 /* AppAI_TranslatorApp.swift in Sources */,
+				D817B5F82EB9F7D3004B48B3 /* ServicesModelService.swift in Sources */,
+				D817B6022EB9F85F004B48B3 /* AppAppDelegate+Hotkeys.swift in Sources */,
+				D817B6042EB9F86B004B48B3 /* UtilitiesLanguageData.swift in Sources */,
+				D817B5F42EB9F7B7004B48B3 /* UtilitiesKeyCodeMapper.swift in Sources */,
+				D817B5EC2EB9F785004B48B3 /* ModelsConnectionProfile.swift in Sources */,
+				D817B5FC2EB9F809004B48B3 /* ManagersSettingsManager.swift in Sources */,
+				D817B6002EB9F83A004B48B3 /* AppAppDelegate.swift in Sources */,
+				D817B5EE2EB9F78A004B48B3 /* ModelsTranslationPrompt.swift in Sources */,
+				D817B5F22EB9F7A6004B48B3 /* ModelsOpenWebUIModel.swift in Sources */,
+				D817B5FA2EB9F7EE004B48B3 /* ServicesTranslationService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -267,7 +322,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.3;
+				MARKETING_VERSION = 1.4;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.vitaly.ai-translator.AI-Translator";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -298,7 +353,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.3;
+				MARKETING_VERSION = 1.4;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.vitaly.ai-translator.AI-Translator";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
