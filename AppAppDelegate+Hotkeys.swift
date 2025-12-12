@@ -7,21 +7,26 @@
 
 import AppKit
 import Foundation
+import os
 
 // MARK: - Hotkey Management
 
 extension AppDelegate {
+    private static let hotkeyLogger = Logger(subsystem: "com.vitaly.ai-translator", category: "Hotkeys")
+    
     func setupHotKeys() {
         localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            if self?.handleKeyEvent(event) == true {
+            guard let self else { return event }
+            if self.handleKeyEvent(event) {
                 return nil
             }
             return event
         }
         
-        globalEventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
-            if self?.popover?.isShown == true {
-                self?.closePopover()
+        globalEventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+            guard let self else { return }
+            if self.popover?.isShown == true {
+                self.closePopover()
             }
         }
         
@@ -46,34 +51,32 @@ extension AppDelegate {
             NSEvent.removeMonitor(monitor)
             globalEventMonitor = nil
         }
+        
+        NotificationCenter.default.removeObserver(self, name: Notification.Name("HotkeyChanged"), object: nil)
     }
     
     func handleKeyEvent(_ event: NSEvent) -> Bool {
-        if event.modifierFlags.contains(.command) &&
-           event.charactersIgnoringModifiers == "," {
+        guard event.modifierFlags.contains(.command) else { return false }
+        
+        switch event.charactersIgnoringModifiers {
+        case ",":
             DispatchQueue.main.async { [weak self] in
                 self?.showSettings()
             }
             return true
-        }
-        
-        if event.modifierFlags.contains(.command) &&
-           event.charactersIgnoringModifiers == "o" {
+        case "o":
             DispatchQueue.main.async { [weak self] in
                 self?.showMainWindow()
             }
             return true
-        }
-        
-        if event.modifierFlags.contains(.command) &&
-           event.charactersIgnoringModifiers == "q" {
+        case "q":
             DispatchQueue.main.async { [weak self] in
                 self?.quit()
             }
             return true
+        default:
+            return false
         }
-        
-        return false
     }
 }
 
@@ -98,7 +101,9 @@ extension AppDelegate {
             alert.addButton(withTitle: "Позже")
             
             if alert.runModal() == .alertFirstButtonReturn {
-                NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
+                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+                    NSWorkspace.shared.open(url)
+                }
             }
         }
     }
@@ -107,7 +112,7 @@ extension AppDelegate {
         stopGlobalHotkey()
         
         guard AXIsProcessTrusted() else {
-            print("Нет доступа к Accessibility")
+            Self.hotkeyLogger.warning("Accessibility not granted")
             return
         }
         
@@ -119,13 +124,13 @@ extension AppDelegate {
             options: .defaultTap,
             eventsOfInterest: CGEventMask(eventMask),
             callback: { (proxy, type, event, refcon) -> Unmanaged<CGEvent>? in
-                guard let refcon = refcon else { return Unmanaged.passRetained(event) }
+                guard let refcon else { return Unmanaged.passRetained(event) }
                 
                 let appDelegate = Unmanaged<AppDelegate>.fromOpaque(refcon).takeUnretainedValue()
                 
                 if appDelegate.checkHotkey(event: event) {
-                    DispatchQueue.main.async {
-                        appDelegate.quickTranslateFromClipboard()
+                    DispatchQueue.main.async { [weak appDelegate] in
+                        appDelegate?.quickTranslateFromClipboard()
                     }
                     return nil
                 }
@@ -134,7 +139,7 @@ extension AppDelegate {
             },
             userInfo: UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
         ) else {
-            print("Не удалось создать event tap")
+            Self.hotkeyLogger.error("Failed to create event tap")
             return
         }
         
@@ -142,6 +147,8 @@ extension AppDelegate {
         runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
         CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
+        
+        Self.hotkeyLogger.info("Global hotkey enabled")
     }
     
     func stopGlobalHotkey() {
@@ -192,23 +199,26 @@ extension AppDelegate {
 
 extension AppDelegate {
     @objc func quickTranslateFromClipboard() {
-        print("🔥 quickTranslateFromClipboard called")
+        Self.hotkeyLogger.debug("Quick translate triggered")
         
         let oldClipboard = NSPasteboard.general.string(forType: .string)
-        print("📋 Old clipboard: \(oldClipboard?.prefix(50) ?? "nil")")
         
         NSPasteboard.general.clearContents()
         simulateCopy()
         
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
-            guard let self = self else { return }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            
+            try? await Task.sleep(for: .milliseconds(200))
             
             guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else {
-                print("❌ No text copied from selection")
+                // Восстанавливаем буфер обмена если текст не был скопирован
                 if let oldText = oldClipboard {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(oldText, forType: .string)
                 }
+                
+                Self.hotkeyLogger.warning("No text selected for translation")
                 
                 let alert = NSAlert()
                 alert.messageText = "Нет выделенного текста"
@@ -219,30 +229,26 @@ extension AppDelegate {
                 return
             }
             
-            print("✅ Text copied: \(text.prefix(50))")
+            Self.hotkeyLogger.debug("Text copied for translation: \(text.prefix(50))...")
             
             UserDefaults.standard.set(text, forKey: "pendingTranslationText")
-            UserDefaults.standard.synchronize()
-            print("💾 Text saved to UserDefaults")
             
             self.showMainWindow()
-            print("🪟 Main window shown")
             
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                print("📤 Posting QuickTranslateText notification")
-                NotificationCenter.default.post(
-                    name: Notification.Name("QuickTranslateText"),
-                    object: nil,
-                    userInfo: ["text": text]
-                )
-                
-                if let oldText = oldClipboard, oldText != text {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(oldText, forType: .string)
-                        print("♻️ Old clipboard restored")
-                    }
-                }
+            try? await Task.sleep(for: .milliseconds(500))
+            
+            NotificationCenter.default.post(
+                name: Notification.Name("QuickTranslateText"),
+                object: nil,
+                userInfo: ["text": text]
+            )
+            
+            // Восстанавливаем буфер обмена
+            if let oldText = oldClipboard, oldText != text {
+                try? await Task.sleep(for: .seconds(1))
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(oldText, forType: .string)
+                Self.hotkeyLogger.debug("Clipboard restored")
             }
         }
     }

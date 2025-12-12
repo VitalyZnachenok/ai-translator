@@ -7,8 +7,9 @@
 
 import SwiftUI
 import AppKit
+import os
 
-class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
+class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Properties
     
     var statusBarItem: NSStatusItem?
@@ -23,6 +24,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     var eventTap: CFMachPort?
     var runLoopSource: CFRunLoopSource?
     
+    private let logger = Logger(subsystem: "com.vitaly.ai-translator", category: "AppDelegate")
+    
     // MARK: - Lifecycle
     
     deinit {
@@ -31,6 +34,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
     
     func applicationDidFinishLaunching(_ notification: Notification) {
+        logger.info("Application launched")
         setupMenuBar()
         setupHotKeys()
         requestAccessibilityPermissions()
@@ -39,6 +43,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
     
     func applicationWillTerminate(_ notification: Notification) {
+        logger.info("Application terminating")
         removeEventMonitors()
         settingsWindow = nil
         mainWindow = nil
@@ -46,7 +51,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
     
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        return false
+        false
     }
 }
 
@@ -113,7 +118,7 @@ extension AppDelegate {
     }
     
     @objc private func statusBarButtonClicked(_ sender: NSStatusBarButton) {
-        let event = NSApp.currentEvent!
+        guard let event = NSApp.currentEvent else { return }
         
         if event.type == .rightMouseUp {
             closePopover()
@@ -171,16 +176,14 @@ extension AppDelegate {
     @objc private func togglePopover() {
         guard let button = statusBarItem?.button else { return }
         
-        if let popover = popover {
-            if popover.isShown {
-                closePopover()
-            } else {
-                mainWindow?.close()
-                settingsWindow?.close()
-                
-                popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-                popover.contentViewController?.view.window?.becomeKey()
-            }
+        if let popover, popover.isShown {
+            closePopover()
+        } else {
+            mainWindow?.close()
+            settingsWindow?.close()
+            
+            popover?.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            popover?.contentViewController?.view.window?.becomeKey()
         }
     }
     
@@ -193,16 +196,14 @@ extension AppDelegate {
 
 extension AppDelegate {
     @objc func showMainWindow() {
-        print("🪟 showMainWindow called")
-        
         if let existingWindow = mainWindow, existingWindow.isVisible {
-            print("✅ Using existing window")
+            logger.debug("Using existing main window")
             existingWindow.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             return
         }
         
-        print("🆕 Creating new window")
+        logger.debug("Creating new main window")
         closePopover()
         
         let newWindow = NSWindow(
@@ -229,8 +230,6 @@ extension AppDelegate {
         
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
-        
-        print("✅ Window created and shown")
     }
     
     @objc func showSettings() {
@@ -281,7 +280,7 @@ extension AppDelegate {
         let aboutPanel = NSAlert()
         aboutPanel.messageText = "AI Переводчик"
         aboutPanel.informativeText = """
-        Версия 1.0
+        Версия 1.4
         
         Умный переводчик с поддержкой OpenWebUI API
         
@@ -322,17 +321,17 @@ extension AppDelegate {
 
 extension AppDelegate: NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
-        if let window = notification.object as? NSWindow {
-            if window == settingsWindow {
-                settingsWindow = nil
-            } else if window == mainWindow {
-                mainWindow = nil
-                NSApp.setActivationPolicy(.accessory)
-            }
+        guard let window = notification.object as? NSWindow else { return }
+        
+        if window == settingsWindow {
+            settingsWindow = nil
+        } else if window == mainWindow {
+            mainWindow = nil
+            NSApp.setActivationPolicy(.accessory)
         }
     }
     
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        return true
+        true
     }
 }

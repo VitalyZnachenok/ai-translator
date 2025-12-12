@@ -6,9 +6,15 @@
 //
 
 import Foundation
+import os
 
-class ModelService: ObservableObject {
-    private var session: URLSession
+actor ModelService {
+    // MARK: - Properties
+    
+    private let session: URLSession
+    private let logger = Logger(subsystem: "com.vitaly.ai-translator", category: "ModelService")
+    
+    // MARK: - Initialization
     
     init() {
         let configuration = URLSessionConfiguration.default
@@ -16,6 +22,8 @@ class ModelService: ObservableObject {
         configuration.timeoutIntervalForResource = 60
         self.session = URLSession(configuration: configuration)
     }
+    
+    // MARK: - Public Methods
     
     func fetchAvailableModels(apiUrl: String, apiToken: String) async throws -> [OpenWebUIModel] {
         var urlString = apiUrl.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -28,7 +36,7 @@ class ModelService: ObservableObject {
         // Формируем правильный URL для моделей
         urlString = buildModelsURL(from: urlString)
         
-        print("Запрос моделей по URL: \(urlString)")
+        logger.debug("Fetching models from: \(urlString)")
         
         guard let url = URL(string: urlString) else {
             throw TranslationError.invalidURL
@@ -46,21 +54,10 @@ class ModelService: ObservableObject {
             throw TranslationError.networkError
         }
         
-        print("HTTP Status Code: \(httpResponse.statusCode)")
+        logger.debug("Models response status: \(httpResponse.statusCode)")
         
         if httpResponse.statusCode != 200 {
-            let responseString = String(data: data, encoding: .utf8) ?? "No response body"
-            print("Error response: \(responseString)")
-            
-            if let errorData = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                if let detail = errorData["detail"] as? String {
-                    throw TranslationError.apiError(detail)
-                } else if let error = errorData["error"] as? [String: Any],
-                          let message = error["message"] as? String {
-                    throw TranslationError.apiError(message)
-                }
-            }
-            throw TranslationError.httpError(httpResponse.statusCode)
+            try handleHTTPError(statusCode: httpResponse.statusCode, data: data)
         }
         
         return try parseModelsResponse(data: data)
@@ -90,40 +87,45 @@ class ModelService: ObservableObject {
         return result
     }
     
+    private func handleHTTPError(statusCode: Int, data: Data) throws {
+        let responseString = String(data: data, encoding: .utf8) ?? "No response body"
+        logger.error("HTTP error \(statusCode): \(responseString)")
+        
+        if let errorData = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            if let detail = errorData["detail"] as? String {
+                throw TranslationError.apiError(detail)
+            } else if let error = errorData["error"] as? [String: Any],
+                      let message = error["message"] as? String {
+                throw TranslationError.apiError(message)
+            }
+        }
+        throw TranslationError.httpError(statusCode)
+    }
+    
     private func parseModelsResponse(data: Data) throws -> [OpenWebUIModel] {
         // Пробуем стандартный формат OpenAI API
-        do {
-            let modelsResponse = try JSONDecoder().decode(ModelsResponse.self, from: data)
-            print("✅ Successfully parsed \(modelsResponse.data.count) models using standard format")
+        if let modelsResponse = try? JSONDecoder().decode(ModelsResponse.self, from: data) {
+            logger.info("Parsed \(modelsResponse.data.count) models using standard format")
             return sortModels(modelsResponse.data)
-        } catch {
-            print("❌ Standard format failed: \(error)")
         }
         
         // Пробуем формат с полем "models"
-        do {
-            let directResponse = try JSONDecoder().decode(DirectModelsResponse.self, from: data)
-            print("✅ Successfully parsed \(directResponse.models.count) models using direct format")
+        if let directResponse = try? JSONDecoder().decode(DirectModelsResponse.self, from: data) {
+            logger.info("Parsed \(directResponse.models.count) models using direct format")
             return sortModels(directResponse.models)
-        } catch {
-            print("❌ Direct format failed: \(error)")
         }
         
         // Пробуем простой массив моделей
-        do {
-            let arrayResponse = try JSONDecoder().decode(ModelsArrayResponse.self, from: data)
-            print("✅ Successfully parsed \(arrayResponse.count) models using array format")
+        if let arrayResponse = try? JSONDecoder().decode(ModelsArrayResponse.self, from: data) {
+            logger.info("Parsed \(arrayResponse.count) models using array format")
             return sortModels(arrayResponse)
-        } catch {
-            print("❌ All JSON decode attempts failed")
-            print("Final decode error: \(error)")
-            throw TranslationError.invalidResponse
         }
+        
+        logger.error("Failed to parse models response")
+        throw TranslationError.invalidResponse
     }
     
     private func sortModels(_ models: [OpenWebUIModel]) -> [OpenWebUIModel] {
-        return models.sorted { 
-            $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending 
-        }
+        models.sorted(using: KeyPathComparator(\.displayName, comparator: .localizedStandard))
     }
 }

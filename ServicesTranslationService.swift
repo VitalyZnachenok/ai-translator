@@ -6,10 +6,16 @@
 //
 
 import Foundation
+import os
 
-class TranslationService: ObservableObject {
+actor TranslationService {
+    // MARK: - Properties
+    
+    private let session: URLSession
     private var settingsManager: SettingsManager?
-    private var session: URLSession
+    private let logger = Logger(subsystem: "com.vitaly.ai-translator", category: "TranslationService")
+    
+    // MARK: - Initialization
     
     init() {
         let configuration = URLSessionConfiguration.default
@@ -20,9 +26,13 @@ class TranslationService: ObservableObject {
         self.session = URLSession(configuration: configuration)
     }
     
+    // MARK: - Configuration
+    
     func configure(with settings: SettingsManager) {
         self.settingsManager = settings
     }
+    
+    // MARK: - Translation
     
     func translate(
         text: String,
@@ -44,7 +54,9 @@ class TranslationService: ObservableObject {
         let url = try buildURL(from: settings.apiUrl)
         let requestBody = buildRequestBody(
             prompt: prompt,
-            settings: settings,
+            modelName: settings.modelName,
+            temperature: settings.temperature,
+            maxTokens: settings.maxTokens,
             customPrompt: customPrompt
         )
         
@@ -77,20 +89,22 @@ class TranslationService: ObservableObject {
     
     private func buildRequestBody(
         prompt: String,
-        settings: SettingsManager,
+        modelName: String,
+        temperature: Double,
+        maxTokens: Int,
         customPrompt: TranslationPrompt?
     ) -> [String: Any] {
         let systemMessage = customPrompt?.systemPrompt ?? 
             "You are a professional translator. Translate accurately while preserving the tone and style of the original text."
         
         return [
-            "model": settings.modelName,
+            "model": modelName,
             "messages": [
                 ["role": "system", "content": systemMessage],
                 ["role": "user", "content": prompt]
             ],
-            "temperature": settings.temperature,
-            "max_tokens": settings.maxTokens,
+            "temperature": temperature,
+            "max_tokens": maxTokens,
             "stream": false
         ]
     }
@@ -111,10 +125,10 @@ class TranslationService: ObservableObject {
         return request
     }
     
-    private func performRequestWithRetry(request: URLRequest) async throws -> String {
+    private func performRequestWithRetry(request: URLRequest, maxRetries: Int = 3) async throws -> String {
         var lastError: Error?
         
-        for attempt in 1...3 {
+        for attempt in 1...maxRetries {
             do {
                 let (data, response) = try await session.data(for: request)
                 
@@ -130,12 +144,13 @@ class TranslationService: ObservableObject {
                 
             } catch {
                 lastError = error
+                logger.warning("Translation attempt \(attempt) failed: \(error.localizedDescription)")
                 
-                if !(error is URLError) || attempt == 3 {
+                if !(error is URLError) || attempt == maxRetries {
                     throw convertError(error)
                 }
                 
-                try await Task.sleep(nanoseconds: UInt64(attempt * 1_000_000_000))
+                try await Task.sleep(for: .seconds(attempt))
             }
         }
         
@@ -155,7 +170,7 @@ class TranslationService: ObservableObject {
     }
     
     private func parseTranslationResponse(data: Data) throws -> String {
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let choices = json["choices"] as? [[String: Any]],
               let firstChoice = choices.first,
               let message = firstChoice["message"] as? [String: Any],
@@ -169,7 +184,9 @@ class TranslationService: ObservableObject {
     private func convertError(_ error: Error) -> Error {
         if error is TranslationError {
             return error
-        } else if let urlError = error as? URLError {
+        }
+        
+        if let urlError = error as? URLError {
             switch urlError.code {
             case .timedOut:
                 return TranslationError.networkTimeout
@@ -178,9 +195,9 @@ class TranslationService: ObservableObject {
             default:
                 return TranslationError.networkError
             }
-        } else {
-            return TranslationError.networkError
         }
+        
+        return TranslationError.networkError
     }
     
     private func createTranslationPrompt(

@@ -8,7 +8,7 @@
 import SwiftUI
 
 struct SettingsView: View {
-    @ObservedObject var settingsManager: SettingsManager
+    var settingsManager: SettingsManager
     @Environment(\.dismiss) private var dismiss
     let onClose: (() -> Void)?
     
@@ -32,75 +32,16 @@ struct SettingsView: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            // Заголовок
-            HStack {
-                Text("Настройки AI Переводчика")
-                    .font(.title2)
-                    .fontWeight(.bold)
-                
-                Spacer()
-                
-                HStack(spacing: 12) {
-                    Button("Отмена") {
-                        loadSettings()
-                        onClose?() ?? dismiss()
-                    }
-                    .keyboardShortcut(.escape)
-                    
-                    Button("Сохранить") {
-                        saveSettings()
-                        onClose?() ?? dismiss()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .keyboardShortcut(.defaultAction)
-                }
-            }
-            .padding()
-            .background(Color(NSColor.windowBackgroundColor))
-            
+            headerSection
             Divider()
-            
-            TabView(selection: $selectedTab) {
-                // Вкладка 1: Профили
-                ScrollView {
-                    VStack(spacing: 20) {
-                        profilesSection
-                        connectionSettings
-                        testingSection
-                        helpSection
-                    }
-                    .padding()
-                }
-                .tabItem {
-                    Label("Подключение", systemImage: "network")
-                }
-                .tag(0)
-                
-                // Вкладка 2: Промпты
-                VStack {
-                    promptsSettings
-                }
-                .tabItem {
-                    Label("Стили перевода", systemImage: "text.bubble")
-                }
-                .tag(1)
-                
-                // Вкладка 3: Горячие клавиши
-                ScrollView {
-                    VStack(spacing: 20) {
-                        hotkeySettings
-                    }
-                    .padding()
-                }
-                .tabItem {
-                    Label("Горячие клавиши", systemImage: "keyboard")
-                }
-                .tag(2)
-            }
+            tabContent
         }
         .frame(width: 650, height: 750)
         .onAppear {
             loadSettings()
+        }
+        .onDisappear {
+            stopRecordingHotkey()
         }
         .sheet(isPresented: $showingAddPrompt) {
             PromptEditView(prompt: nil) { newPrompt in
@@ -128,6 +69,75 @@ struct SettingsView: View {
         }
     }
     
+    // MARK: - Header Section
+    
+    private var headerSection: some View {
+        HStack {
+            Text("Настройки AI Переводчика")
+                .font(.title2)
+                .fontWeight(.bold)
+            
+            Spacer()
+            
+            HStack(spacing: 12) {
+                Button("Отмена") {
+                    loadSettings()
+                    closeView()
+                }
+                .keyboardShortcut(.escape)
+                
+                Button("Сохранить") {
+                    saveSettings()
+                    closeView()
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding()
+        .background(Color(NSColor.windowBackgroundColor))
+    }
+    
+    private var tabContent: some View {
+        TabView(selection: $selectedTab) {
+            // Вкладка 1: Профили
+            ScrollView {
+                VStack(spacing: 20) {
+                    profilesSection
+                    connectionSettings
+                    testingSection
+                    helpSection
+                }
+                .padding()
+            }
+            .tabItem {
+                Label("Подключение", systemImage: "network")
+            }
+            .tag(0)
+            
+            // Вкладка 2: Промпты
+            VStack {
+                promptsSettings
+            }
+            .tabItem {
+                Label("Стили перевода", systemImage: "text.bubble")
+            }
+            .tag(1)
+            
+            // Вкладка 3: Горячие клавиши
+            ScrollView {
+                VStack(spacing: 20) {
+                    hotkeySettings
+                }
+                .padding()
+            }
+            .tabItem {
+                Label("Горячие клавиши", systemImage: "keyboard")
+            }
+            .tag(2)
+        }
+    }
+    
     // MARK: - Profile Section
     
     private var profilesSection: some View {
@@ -150,57 +160,65 @@ struct SettingsView: View {
                 }
                 
                 if settingsManager.connectionProfiles.isEmpty {
-                    VStack(spacing: 8) {
-                        Text("Нет настроенных профилей")
-                            .foregroundColor(.secondary)
-                        
-                        HStack(spacing: 12) {
-                            Button("Создать первый профиль") {
-                                showingAddProfile = true
-                            }
-                            .buttonStyle(.borderedProminent)
-                            
-                            Button("Добавить примеры") {
-                                let examples = settingsManager.createExampleProfiles()
-                                for example in examples {
-                                    settingsManager.addProfile(example)
-                                }
-                                if let first = examples.first {
-                                    settingsManager.setActiveProfile(first.id)
-                                    loadSettingsFromActiveProfile()
-                                }
-                            }
-                            .buttonStyle(.bordered)
-                        }
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding()
+                    emptyProfilesView
                 } else {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 200))], spacing: 12) {
-                        ForEach(settingsManager.connectionProfiles) { profile in
-                            ProfileCard(
-                                profile: profile,
-                                isActive: settingsManager.activeProfileId == profile.id,
-                                onSelect: {
-                                    settingsManager.setActiveProfile(profile.id)
-                                    loadSettingsFromActiveProfile()
-                                },
-                                onEdit: { editingProfile = profile },
-                                onDuplicate: {
-                                    let newProfile = settingsManager.duplicateProfile(profile)
-                                    settingsManager.setActiveProfile(newProfile.id)
-                                    loadSettingsFromActiveProfile()
-                                },
-                                onDelete: {
-                                    settingsManager.deleteProfile(profile)
-                                    loadSettingsFromActiveProfile()
-                                }
-                            )
-                        }
-                    }
+                    profilesGrid
                 }
             }
             .padding()
+        }
+    }
+    
+    private var emptyProfilesView: some View {
+        VStack(spacing: 8) {
+            Text("Нет настроенных профилей")
+                .foregroundColor(.secondary)
+            
+            HStack(spacing: 12) {
+                Button("Создать первый профиль") {
+                    showingAddProfile = true
+                }
+                .buttonStyle(.borderedProminent)
+                
+                Button("Добавить примеры") {
+                    let examples = settingsManager.createExampleProfiles()
+                    for example in examples {
+                        settingsManager.addProfile(example)
+                    }
+                    if let first = examples.first {
+                        settingsManager.setActiveProfile(first.id)
+                        loadSettingsFromActiveProfile()
+                    }
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding()
+    }
+    
+    private var profilesGrid: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 200))], spacing: 12) {
+            ForEach(settingsManager.connectionProfiles) { profile in
+                ProfileCard(
+                    profile: profile,
+                    isActive: settingsManager.activeProfileId == profile.id,
+                    onSelect: {
+                        settingsManager.setActiveProfile(profile.id)
+                        loadSettingsFromActiveProfile()
+                    },
+                    onEdit: { editingProfile = profile },
+                    onDuplicate: {
+                        let newProfile = settingsManager.duplicateProfile(profile)
+                        settingsManager.setActiveProfile(newProfile.id)
+                        loadSettingsFromActiveProfile()
+                    },
+                    onDelete: {
+                        settingsManager.deleteProfile(profile)
+                        loadSettingsFromActiveProfile()
+                    }
+                )
+            }
         }
     }
     
@@ -210,77 +228,85 @@ struct SettingsView: View {
         GroupBox(label: Label("🔗 Активный профиль", systemImage: "network")) {
             VStack(alignment: .leading, spacing: 12) {
                 if let activeProfile = settingsManager.activeProfile {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text(activeProfile.icon)
-                                .font(.title2)
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(activeProfile.name)
-                                    .font(.headline)
-                                Text("API: \(activeProfile.apiUrl)")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                    .lineLimit(1)
-                                Text("Модель: \(activeProfile.modelName)")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                    .lineLimit(1)
-                            }
-                            Spacer()
-                            
-                            HStack {
-                                Circle()
-                                    .fill(activeProfile.isConfigured ? Color.green : Color.red)
-                                    .frame(width: 8, height: 8)
-                                Text(activeProfile.isConfigured ? "Готов" : "Не настроен")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                        }
-                        
-                        Divider()
-                        
-                        HStack {
-                            Text("Параметры генерации:")
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                            Spacer()
-                            Text("Temperature: \(String(format: "%.1f", activeProfile.temperature))")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                            Text("•")
-                                .foregroundColor(.secondary)
-                            Text("Max Tokens: \(activeProfile.maxTokens)")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        
-                        Text("Для изменения настроек используйте редактор профилей выше")
-                            .font(.caption)
-                            .foregroundColor(.blue)
-                            .italic()
-                    }
+                    activeProfileInfo(activeProfile)
                 } else {
-                    VStack(spacing: 12) {
-                        HStack {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .foregroundColor(.orange)
-                            Text("Профиль не выбран")
-                                .font(.headline)
-                                .foregroundColor(.orange)
-                        }
-                        
-                        Text("Создайте или выберите профиль подключения выше")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding()
+                    noActiveProfileView
                 }
             }
             .padding()
         }
+    }
+    
+    private func activeProfileInfo(_ profile: ConnectionProfile) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(profile.icon)
+                    .font(.title2)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(profile.name)
+                        .font(.headline)
+                    Text("API: \(profile.apiUrl)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                    Text("Модель: \(profile.modelName)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer()
+                
+                HStack {
+                    Circle()
+                        .fill(profile.isConfigured ? Color.green : Color.red)
+                        .frame(width: 8, height: 8)
+                    Text(profile.isConfigured ? "Готов" : "Не настроен")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+            
+            Divider()
+            
+            HStack {
+                Text("Параметры генерации:")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                Spacer()
+                Text("Temperature: \(String(format: "%.1f", profile.temperature))")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Text("•")
+                    .foregroundColor(.secondary)
+                Text("Max Tokens: \(profile.maxTokens)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            
+            Text("Для изменения настроек используйте редактор профилей выше")
+                .font(.caption)
+                .foregroundColor(.blue)
+                .italic()
+        }
+    }
+    
+    private var noActiveProfileView: some View {
+        VStack(spacing: 12) {
+            HStack {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundColor(.orange)
+                Text("Профиль не выбран")
+                    .font(.headline)
+                    .foregroundColor(.orange)
+            }
+            
+            Text("Создайте или выберите профиль подключения выше")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding()
     }
     
     // MARK: - Testing Section
@@ -292,8 +318,8 @@ struct SettingsView: View {
                     HStack {
                         if isTestingConnection {
                             ProgressView()
-                                .scaleEffect(0.8)
-                                .progressViewStyle(CircularProgressViewStyle())
+                                .controlSize(.small)
+                                .progressViewStyle(.circular)
                         } else {
                             Image(systemName: "network")
                         }
@@ -388,60 +414,68 @@ struct SettingsView: View {
             .padding()
             
             if customPrompts.isEmpty {
-                VStack(spacing: 20) {
-                    Image(systemName: "text.bubble")
-                        .font(.system(size: 50))
-                        .foregroundColor(.secondary)
-                    
-                    Text("Нет настроенных стилей")
-                        .font(.title3)
-                        .foregroundColor(.secondary)
-                    
-                    Text("Добавьте свои стили перевода для разных случаев:\nпростой язык, технический перевод, литературный стиль и т.д.")
-                        .multilineTextAlignment(.center)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    
-                    Button(action: addDefaultPrompts) {
-                        Label("Добавить примеры стилей", systemImage: "sparkles")
-                    }
-                    .buttonStyle(.bordered)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding()
+                emptyPromptsView
             } else {
-                List {
-                    ForEach(customPrompts) { prompt in
-                        HStack {
-                            Text(prompt.icon)
-                                .font(.title2)
-                            
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(prompt.name)
-                                    .font(.headline)
-                                Text(prompt.description)
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                    .lineLimit(2)
-                            }
-                            
-                            Spacer()
-                            
-                            Button(action: { editingPrompt = prompt }) {
-                                Image(systemName: "pencil.circle")
-                                    .foregroundColor(.blue)
-                            }
-                            .buttonStyle(PlainButtonStyle())
-                            
-                            Button(action: { deletePrompt(prompt) }) {
-                                Image(systemName: "trash.circle")
-                                    .foregroundColor(.red)
-                            }
-                            .buttonStyle(PlainButtonStyle())
-                        }
-                        .padding(.vertical, 8)
+                promptsList
+            }
+        }
+    }
+    
+    private var emptyPromptsView: some View {
+        VStack(spacing: 20) {
+            Image(systemName: "text.bubble")
+                .font(.system(size: 50))
+                .foregroundColor(.secondary)
+            
+            Text("Нет настроенных стилей")
+                .font(.title3)
+                .foregroundColor(.secondary)
+            
+            Text("Добавьте свои стили перевода для разных случаев:\nпростой язык, технический перевод, литературный стиль и т.д.")
+                .multilineTextAlignment(.center)
+                .font(.caption)
+                .foregroundColor(.secondary)
+            
+            Button(action: addDefaultPrompts) {
+                Label("Добавить примеры стилей", systemImage: "sparkles")
+            }
+            .buttonStyle(.bordered)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding()
+    }
+    
+    private var promptsList: some View {
+        List {
+            ForEach(customPrompts) { prompt in
+                HStack {
+                    Text(prompt.icon)
+                        .font(.title2)
+                    
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(prompt.name)
+                            .font(.headline)
+                        Text(prompt.description)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .lineLimit(2)
                     }
+                    
+                    Spacer()
+                    
+                    Button(action: { editingPrompt = prompt }) {
+                        Image(systemName: "pencil.circle")
+                            .foregroundColor(.blue)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    
+                    Button(action: { deletePrompt(prompt) }) {
+                        Image(systemName: "trash.circle")
+                            .foregroundColor(.red)
+                    }
+                    .buttonStyle(PlainButtonStyle())
                 }
+                .padding(.vertical, 8)
             }
         }
     }
@@ -461,26 +495,7 @@ struct SettingsView: View {
                         
                         Spacer()
                         
-                        Button(action: { startRecordingHotkey() }) {
-                            HStack {
-                                if isRecordingHotkey {
-                                    ProgressView()
-                                        .scaleEffect(0.7)
-                                        .progressViewStyle(CircularProgressViewStyle())
-                                    Text("Нажмите новую комбинацию...")
-                                        .foregroundColor(.orange)
-                                } else {
-                                    Text(quickTranslateHotkey)
-                                        .font(.system(.body, design: .monospaced))
-                                        .foregroundColor(.blue)
-                                }
-                            }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 8)
-                            .background(isRecordingHotkey ? Color.orange.opacity(0.1) : Color.blue.opacity(0.1))
-                            .cornerRadius(8)
-                        }
-                        .buttonStyle(PlainButtonStyle())
+                        hotkeyButton
                         
                         if isRecordingHotkey {
                             Button("Отмена") {
@@ -510,53 +525,84 @@ struct SettingsView: View {
                 .padding()
             }
             
-            GroupBox(label: Label("📋 Как использовать", systemImage: "info.circle")) {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Быстрый перевод выделенного текста:")
-                        .font(.headline)
-                    
-                    HStack(alignment: .top, spacing: 8) {
-                        Text("1.")
-                            .font(.system(.caption, design: .monospaced))
-                            .foregroundColor(.blue)
-                        Text("Выделите текст в любом приложении")
-                            .font(.caption)
-                    }
-                    
-                    HStack(alignment: .top, spacing: 8) {
-                        Text("2.")
-                            .font(.system(.caption, design: .monospaced))
-                            .foregroundColor(.blue)
-                        Text("Нажмите горячую клавишу \(quickTranslateHotkey)")
-                            .font(.caption)
-                    }
-                    
-                    HStack(alignment: .top, spacing: 8) {
-                        Text("3.")
-                            .font(.system(.caption, design: .monospaced))
-                            .foregroundColor(.blue)
-                        Text("Переводчик автоматически скопирует выделенный текст и начнет перевод")
-                            .font(.caption)
-                    }
-                    
-                    Divider()
-                    
-                    HStack {
-                        Image(systemName: "info.circle.fill")
-                            .foregroundColor(.blue)
-                        Text("Приложение автоматически восстановит предыдущее содержимое буфера обмена")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                }
-                .padding()
-            }
+            hotkeyInstructions
             
             Spacer()
         }
     }
     
+    private var hotkeyButton: some View {
+        Button(action: { startRecordingHotkey() }) {
+            HStack {
+                if isRecordingHotkey {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .progressViewStyle(.circular)
+                    Text("Нажмите новую комбинацию...")
+                        .foregroundColor(.orange)
+                } else {
+                    Text(quickTranslateHotkey)
+                        .font(.system(.body, design: .monospaced))
+                        .foregroundColor(.blue)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(isRecordingHotkey ? Color.orange.opacity(0.1) : Color.blue.opacity(0.1))
+            .cornerRadius(8)
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+    
+    private var hotkeyInstructions: some View {
+        GroupBox(label: Label("📋 Как использовать", systemImage: "info.circle")) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Быстрый перевод выделенного текста:")
+                    .font(.headline)
+                
+                HStack(alignment: .top, spacing: 8) {
+                    Text("1.")
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundColor(.blue)
+                    Text("Выделите текст в любом приложении")
+                        .font(.caption)
+                }
+                
+                HStack(alignment: .top, spacing: 8) {
+                    Text("2.")
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundColor(.blue)
+                    Text("Нажмите горячую клавишу \(quickTranslateHotkey)")
+                        .font(.caption)
+                }
+                
+                HStack(alignment: .top, spacing: 8) {
+                    Text("3.")
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundColor(.blue)
+                    Text("Переводчик автоматически скопирует выделенный текст и начнет перевод")
+                        .font(.caption)
+                }
+                
+                Divider()
+                
+                HStack {
+                    Image(systemName: "info.circle.fill")
+                        .foregroundColor(.blue)
+                    Text("Приложение автоматически восстановит предыдущее содержимое буфера обмена")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+            .padding()
+        }
+    }
+    
     // MARK: - Private Methods
+    
+    private func closeView() {
+        onClose?() ?? dismiss()
+    }
     
     private func loadSettings() {
         loadSettingsFromActiveProfile()
@@ -623,9 +669,10 @@ struct SettingsView: View {
         testResult = ""
         
         let testService = TranslationService()
-        testService.configure(with: settingsManager)
         
         Task {
+            await testService.configure(with: settingsManager)
+            
             do {
                 let result = try await testService.translate(
                     text: "Hello world",
@@ -650,12 +697,12 @@ struct SettingsView: View {
     private func startRecordingHotkey() {
         isRecordingHotkey = true
         
-        if let monitor = hotkeyMonitor {
-            NSEvent.removeMonitor(monitor)
-        }
+        // Удаляем предыдущий монитор если есть
+        stopRecordingHotkey()
+        isRecordingHotkey = true
         
-        hotkeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            guard self.isRecordingHotkey else { return event }
+        hotkeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [self] event in
+            guard isRecordingHotkey else { return event }
             
             var modifiers: [String] = []
             
@@ -674,9 +721,9 @@ struct SettingsView: View {
             
             if !modifiers.isEmpty {
                 let keyChar = KeyCodeMapper.characterForKeyCode(event.keyCode)
-                self.quickTranslateHotkey = modifiers.joined() + keyChar
-                self.settingsManager.quickTranslateHotkey = self.quickTranslateHotkey
-                self.stopRecordingHotkey()
+                quickTranslateHotkey = modifiers.joined() + keyChar
+                settingsManager.quickTranslateHotkey = quickTranslateHotkey
+                stopRecordingHotkey()
                 return nil
             }
             

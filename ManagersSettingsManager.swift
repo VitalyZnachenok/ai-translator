@@ -7,62 +7,61 @@
 
 import Foundation
 import SwiftUI
+import Observation
 
-class SettingsManager: ObservableObject {
-    @Published var connectionProfiles: [ConnectionProfile] = []
-    @Published var activeProfileId: String = ""
-    @Published var customPrompts: [TranslationPrompt] = []
-    @Published var quickTranslateHotkey: String = "⌘⇧T"
+@Observable
+final class SettingsManager {
+    // MARK: - Properties
+    
+    var connectionProfiles: [ConnectionProfile] = []
+    var activeProfileId: String = ""
+    var customPrompts: [TranslationPrompt] = []
+    var quickTranslateHotkey: String = "⌘⇧T"
     
     // MARK: - Computed Properties
     
     var apiUrl: String {
         get { activeProfile?.apiUrl ?? "" }
         set {
-            if var profile = activeProfile {
-                profile.apiUrl = newValue
-                updateActiveProfile(profile)
-            }
+            guard var profile = activeProfile else { return }
+            profile.apiUrl = newValue
+            updateActiveProfile(profile)
         }
     }
     
     var apiToken: String {
         get { activeProfile?.apiToken ?? "" }
         set {
-            if var profile = activeProfile {
-                profile.apiToken = newValue
-                updateActiveProfile(profile)
-            }
+            guard var profile = activeProfile else { return }
+            profile.apiToken = newValue
+            updateActiveProfile(profile)
         }
     }
     
     var modelName: String {
         get { activeProfile?.modelName ?? "" }
         set {
-            if var profile = activeProfile {
-                profile.modelName = newValue
-                updateActiveProfile(profile)
-            }
+            guard var profile = activeProfile else { return }
+            profile.modelName = newValue
+            updateActiveProfile(profile)
         }
     }
     
     var temperature: Double {
         get { activeProfile?.temperature ?? 0.3 }
         set {
-            if var profile = activeProfile {
-                profile.temperature = newValue
-                updateActiveProfile(profile)
-            }
+            guard var profile = activeProfile else { return }
+            profile.temperature = newValue
+            updateActiveProfile(profile)
         }
     }
     
     var maxTokens: Int {
         get { activeProfile?.maxTokens ?? 1024 }
         set {
-            if var profile = activeProfile {
-                profile.maxTokens = newValue
-                updateActiveProfile(profile)
-            }
+            guard var profile = activeProfile else { return }
+            profile.maxTokens = newValue
+            updateActiveProfile(profile)
         }
     }
     
@@ -71,9 +70,7 @@ class SettingsManager: ObservableObject {
     }
     
     var activeProfile: ConnectionProfile? {
-        get {
-            connectionProfiles.first { $0.id == activeProfileId }
-        }
+        get { connectionProfiles.first { $0.id == activeProfileId } }
         set {
             if let newProfile = newValue {
                 updateActiveProfile(newProfile)
@@ -102,8 +99,8 @@ class SettingsManager: ObservableObject {
         
         activeProfileId = userDefaults.string(forKey: "activeProfileId") ?? ""
         
-        if activeProfileId.isEmpty && !connectionProfiles.isEmpty {
-            activeProfileId = connectionProfiles.first!.id
+        if activeProfileId.isEmpty, let firstProfile = connectionProfiles.first {
+            activeProfileId = firstProfile.id
         }
         
         if let promptsData = userDefaults.data(forKey: "customPrompts"),
@@ -153,10 +150,9 @@ class SettingsManager: ObservableObject {
     }
     
     func setActiveProfile(_ profileId: String) {
-        if connectionProfiles.contains(where: { $0.id == profileId }) {
-            activeProfileId = profileId
-            saveSettings()
-        }
+        guard connectionProfiles.contains(where: { $0.id == profileId }) else { return }
+        activeProfileId = profileId
+        saveSettings()
     }
     
     func duplicateProfile(_ profile: ConnectionProfile) -> ConnectionProfile {
@@ -182,7 +178,7 @@ class SettingsManager: ObservableObject {
     }
     
     func createExampleProfiles() -> [ConnectionProfile] {
-        return [
+        [
             ConnectionProfile(
                 name: "OpenAI GPT-4",
                 apiUrl: "https://api.openai.com/v1",
@@ -235,33 +231,36 @@ class SettingsManager: ObservableObject {
         let oldApiToken = userDefaults.string(forKey: "apiToken") ?? ""
         let oldModelName = userDefaults.string(forKey: "modelName") ?? ""
         
-        if !oldApiUrl.isEmpty && !oldApiToken.isEmpty && !oldModelName.isEmpty && connectionProfiles.isEmpty {
-            let savedTemperature = userDefaults.double(forKey: "temperature")
-            let temperature = savedTemperature == 0 ? 0.3 : savedTemperature
-            
-            let savedMaxTokens = userDefaults.integer(forKey: "maxTokens")
-            let maxTokens = savedMaxTokens == 0 ? 1024 : savedMaxTokens
-            
-            let defaultProfile = ConnectionProfile(
-                name: "Основной профиль",
-                apiUrl: oldApiUrl,
-                apiToken: oldApiToken,
-                modelName: oldModelName,
-                temperature: temperature,
-                maxTokens: maxTokens,
-                icon: "🌐"
-            )
-            
-            connectionProfiles = [defaultProfile]
-            activeProfileId = defaultProfile.id
-            
-            userDefaults.removeObject(forKey: "apiUrl")
-            userDefaults.removeObject(forKey: "apiToken")
-            userDefaults.removeObject(forKey: "modelName")
-            userDefaults.removeObject(forKey: "temperature")
-            userDefaults.removeObject(forKey: "maxTokens")
-            
-            saveSettings()
+        guard !oldApiUrl.isEmpty, !oldApiToken.isEmpty, !oldModelName.isEmpty, connectionProfiles.isEmpty else {
+            return
         }
+        
+        let savedTemperature = userDefaults.double(forKey: "temperature")
+        let temperature = savedTemperature == 0 ? 0.3 : savedTemperature
+        
+        let savedMaxTokens = userDefaults.integer(forKey: "maxTokens")
+        let maxTokens = savedMaxTokens == 0 ? 1024 : savedMaxTokens
+        
+        let defaultProfile = ConnectionProfile(
+            name: "Основной профиль",
+            apiUrl: oldApiUrl,
+            apiToken: oldApiToken,
+            modelName: oldModelName,
+            temperature: temperature,
+            maxTokens: maxTokens,
+            icon: "🌐"
+        )
+        
+        connectionProfiles = [defaultProfile]
+        activeProfileId = defaultProfile.id
+        
+        // Удаляем старые ключи
+        userDefaults.removeObject(forKey: "apiUrl")
+        userDefaults.removeObject(forKey: "apiToken")
+        userDefaults.removeObject(forKey: "modelName")
+        userDefaults.removeObject(forKey: "temperature")
+        userDefaults.removeObject(forKey: "maxTokens")
+        
+        saveSettings()
     }
 }
