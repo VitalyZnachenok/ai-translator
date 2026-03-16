@@ -64,6 +64,21 @@ final class TranslationViewModel {
         customPrompts.first { $0.id == selectedPromptId }
     }
     
+    var formattedOutput: AttributedString {
+        guard !outputText.isEmpty else {
+            var placeholder = AttributedString("Результат перевода появится здесь...")
+            placeholder.foregroundColor = .secondary
+            return placeholder
+        }
+        if let md = try? AttributedString(
+            markdown: outputText,
+            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        ) {
+            return md
+        }
+        return AttributedString(outputText)
+    }
+    
     // MARK: - Initialization
     
     init() {}
@@ -183,6 +198,11 @@ final class TranslationViewModel {
     }
     
     func clearOutput() {
+        outputText = ""
+    }
+    
+    func clearAll() {
+        inputText = ""
         outputText = ""
     }
     

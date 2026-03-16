@@ -7,6 +7,7 @@
 
 import SwiftUI
 import AppKit
+import ServiceManagement
 import os
 
 class AppDelegate: NSObject, NSApplicationDelegate {
@@ -25,6 +26,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var runLoopSource: CFRunLoopSource?
     
     private let logger = Logger(subsystem: "com.vitaly.ai-translator", category: "AppDelegate")
+    
+    var isLaunchAtLoginEnabled: Bool {
+        SMAppService.mainApp.status == .enabled
+    }
     
     // MARK: - Lifecycle
     
@@ -147,6 +152,13 @@ extension AppDelegate {
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "📋 История переводов", action: #selector(showHistory), keyEquivalent: "h"))
         menu.addItem(NSMenuItem.separator())
+        
+        let launchAtLoginTitle = isLaunchAtLoginEnabled
+            ? "✅ Запуск при старте системы"
+            : "⬜ Запуск при старте системы"
+        menu.addItem(NSMenuItem(title: launchAtLoginTitle, action: #selector(toggleLaunchAtLogin), keyEquivalent: ""))
+        
+        menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "📖 О программе", action: #selector(showAbout), keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "❌ Выйти", action: #selector(quit), keyEquivalent: "q"))
@@ -235,6 +247,7 @@ extension AppDelegate {
     @objc func showSettings() {
         if let existingWindow = settingsWindow, existingWindow.isVisible {
             existingWindow.makeKeyAndOrderFront(nil)
+            NSApp.setActivationPolicy(.regular)
             NSApp.activate(ignoringOtherApps: true)
             return
         }
@@ -264,7 +277,22 @@ extension AppDelegate {
         
         newWindow.center()
         newWindow.makeKeyAndOrderFront(nil)
+        NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+    }
+    
+    @objc func toggleLaunchAtLogin() {
+        do {
+            if isLaunchAtLoginEnabled {
+                try SMAppService.mainApp.unregister()
+                logger.info("Launch at login disabled")
+            } else {
+                try SMAppService.mainApp.register()
+                logger.info("Launch at login enabled")
+            }
+        } catch {
+            logger.error("Failed to toggle launch at login: \(error.localizedDescription)")
+        }
     }
     
     @objc private func showHistory() {
@@ -327,6 +355,10 @@ extension AppDelegate: NSWindowDelegate {
             settingsWindow = nil
         } else if window == mainWindow {
             mainWindow = nil
+        }
+        
+        let hasVisibleWindows = (mainWindow?.isVisible == true) || (settingsWindow?.isVisible == true)
+        if !hasVisibleWindows {
             NSApp.setActivationPolicy(.accessory)
         }
     }

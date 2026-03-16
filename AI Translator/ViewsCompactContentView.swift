@@ -245,6 +245,15 @@ struct CompactContentView: View {
             .disabled(!viewModel.canTranslate)
             .buttonStyle(PlainButtonStyle())
             .help("Перевести с пояснениями")
+            
+            Button(action: { viewModel.clearAll() }) {
+                Image(systemName: "trash")
+                    .font(.system(size: 12))
+                    .foregroundColor(.red)
+            }
+            .buttonStyle(PlainButtonStyle())
+            .disabled(viewModel.inputText.isEmpty && viewModel.outputText.isEmpty)
+            .help("Очистить всё")
         }
     }
     
@@ -271,9 +280,8 @@ struct CompactContentView: View {
             }
             
             ScrollView {
-                Text(viewModel.outputText.isEmpty ? "Результат появится здесь..." : viewModel.outputText)
+                Text(viewModel.formattedOutput)
                     .font(.system(size: 12))
-                    .foregroundColor(viewModel.outputText.isEmpty ? .secondary : .primary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(8)
                     .background(Color(.controlBackgroundColor))

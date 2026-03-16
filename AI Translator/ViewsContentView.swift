@@ -312,6 +312,18 @@ struct ContentView: View {
             }
             .buttonStyle(PlainButtonStyle())
             .help("Вставить текст из буфера обмена")
+            
+            Button(action: { viewModel.clearAll() }) {
+                HStack {
+                    Image(systemName: "trash")
+                    Text("Очистить")
+                }
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(.red)
+            }
+            .buttonStyle(PlainButtonStyle())
+            .disabled(viewModel.inputText.isEmpty && viewModel.outputText.isEmpty)
+            .help("Очистить ввод и результат")
         }
     }
     
@@ -350,9 +362,8 @@ struct ContentView: View {
             }
             
             ScrollView {
-                Text(viewModel.outputText.isEmpty ? "Результат перевода появится здесь..." : viewModel.outputText)
+                Text(viewModel.formattedOutput)
                     .font(.body)
-                    .foregroundColor(viewModel.outputText.isEmpty ? .secondary : .primary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(12)
                     .background(Color(.controlBackgroundColor))
