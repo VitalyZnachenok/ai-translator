@@ -91,6 +91,14 @@ final class TranslationViewModel {
     
     func configure(with settings: SettingsManager) {
         self.settingsManager = settings
+
+        // Подхватываем последние использованные значения, чтобы они были общими с in-place переводом.
+        selectedSourceLanguage = settings.lastSourceLanguage
+        selectedTargetLanguage = settings.lastTargetLanguage
+        if !settings.lastPromptId.isEmpty {
+            selectedPromptId = settings.lastPromptId
+        }
+
         Task {
             await translationService.configure(with: settings)
         }
@@ -114,11 +122,17 @@ final class TranslationViewModel {
     
     private func performTranslation(withExplanation: Bool) {
         guard canTranslate, let settings = settingsManager else { return }
-        
+
+        // Сохраняем последний использованный выбор, чтобы in-place перевод подхватывал актуальные настройки.
+        settings.lastSourceLanguage = selectedSourceLanguage
+        settings.lastTargetLanguage = selectedTargetLanguage
+        settings.lastPromptId = selectedPromptId
+        settings.saveSettings()
+
         isTranslating = true
         outputText = ""
         errorMessage = ""
-        
+
         var customPrompt = settings.customPrompts.first { $0.id == selectedPromptId }
         
         // Если нужен перевод с пояснениями, модифицируем промпт

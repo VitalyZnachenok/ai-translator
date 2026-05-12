@@ -21,9 +21,26 @@ struct SettingsView: View {
     @State private var quickTranslateHotkey = "⌘⇧T"
     @State private var isRecordingHotkey = false
     @State private var hotkeyMonitor: Any?
+    @State private var recordingTarget: HotkeyTarget = .quick
+
+    // In-place translation
+    @State private var inPlaceEnabled = true
+    @State private var inPlaceTranslateHotkey = "⌘⇧T"
+    @State private var inPlaceUseCustomSettings = false
+    @State private var inPlaceSourceLanguage = "auto"
+    @State private var inPlaceTargetLanguage = "ru"
+    @State private var inPlacePromptId = ""
+    @State private var inPlaceAutoSwap = false
+    @State private var inPlaceLanguagePairs: [LanguagePair] = []
+
     @State private var isTestingConnection = false
     @State private var testResult = ""
     @State private var showAdvancedSettings = false
+
+    private enum HotkeyTarget {
+        case quick
+        case inPlace
+    }
     
     init(settingsManager: SettingsManager, onClose: (() -> Void)? = nil) {
         self.settingsManager = settingsManager
@@ -481,120 +498,337 @@ struct SettingsView: View {
     }
     
     // MARK: - Hotkey Settings
-    
+
     private var hotkeySettings: some View {
         VStack(spacing: 20) {
-            GroupBox(label: Label("⚡ Быстрый перевод", systemImage: "keyboard")) {
-                VStack(alignment: .leading, spacing: 16) {
-                    Text("Горячая клавиша для быстрого перевода из буфера обмена")
-                        .font(.headline)
-                    
-                    HStack {
-                        Text("Текущая комбинация:")
-                            .foregroundColor(.secondary)
-                        
-                        Spacer()
-                        
-                        hotkeyButton
-                        
-                        if isRecordingHotkey {
-                            Button("Отмена") {
-                                stopRecordingHotkey()
-                            }
-                            .buttonStyle(.bordered)
-                        } else {
-                            Button("Изменить") {
-                                startRecordingHotkey()
-                            }
-                            .buttonStyle(.bordered)
-                        }
-                    }
-                    
-                    Text("Используйте модификаторы: ⌘ Command, ⇧ Shift, ⌥ Option, ⌃ Control")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    
-                    Divider()
-                    
-                    Button("Сбросить на значение по умолчанию (⌘⇧T)") {
-                        quickTranslateHotkey = "⌘⇧T"
-                        settingsManager.quickTranslateHotkey = quickTranslateHotkey
-                    }
-                    .buttonStyle(LinkButtonStyle())
-                }
-                .padding()
-            }
-            
+            quickTranslateSection
+            inPlaceTranslateSection
             hotkeyInstructions
-            
             Spacer()
         }
     }
-    
-    private var hotkeyButton: some View {
-        Button(action: { startRecordingHotkey() }) {
+
+    private var quickTranslateSection: some View {
+        GroupBox(label: Label("⚡ Быстрый перевод (в окне)", systemImage: "keyboard")) {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Открыть окно переводчика и сразу перевести выделенный текст")
+                    .font(.headline)
+
+                HStack {
+                    Text("Текущая комбинация:")
+                        .foregroundColor(.secondary)
+
+                    Spacer()
+
+                    hotkeyDisplay(value: quickTranslateHotkey, target: .quick)
+                    hotkeyEditButton(target: .quick)
+                }
+
+                Text("Используйте модификаторы: ⌘ Command, ⇧ Shift, ⌥ Option, ⌃ Control")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                Divider()
+
+                Button("Сбросить на значение по умолчанию (⌘⇧T)") {
+                    quickTranslateHotkey = "⌘⇧T"
+                    settingsManager.quickTranslateHotkey = quickTranslateHotkey
+                }
+                .buttonStyle(LinkButtonStyle())
+            }
+            .padding()
+        }
+    }
+
+    private var inPlaceTranslateSection: some View {
+        GroupBox(label: Label("↪︎ Перевод на месте", systemImage: "arrow.triangle.2.circlepath")) {
+            VStack(alignment: .leading, spacing: 16) {
+                Toggle(isOn: $inPlaceEnabled) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Включить перевод на месте")
+                            .font(.headline)
+                        Text("Заменяет выделенный текст переводом прямо в активном окне")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+
+                if inPlaceEnabled {
+                    Divider()
+
+                    HStack {
+                        Text("Горячая клавиша:")
+                            .foregroundColor(.secondary)
+
+                        Spacer()
+
+                        hotkeyDisplay(value: inPlaceTranslateHotkey, target: .inPlace)
+                        hotkeyEditButton(target: .inPlace)
+                    }
+
+                    if hotkeyConflict {
+                        HStack(spacing: 6) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundColor(.orange)
+                            Text("Конфликт: эта комбинация совпадает с быстрым переводом — приоритет получит перевод на месте.")
+                                .font(.caption)
+                                .foregroundColor(.orange)
+                        }
+                    }
+
+                    Divider()
+
+                    Toggle(isOn: $inPlaceUseCustomSettings) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Использовать собственные настройки")
+                                .font(.subheadline)
+                            Text(inPlaceUseCustomSettings
+                                 ? "Перевод на месте использует язык и стиль, заданные ниже"
+                                 : "Перевод на месте использует язык и стиль, выбранные в окне переводчика")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+
+                    if inPlaceUseCustomSettings {
+                        inPlaceCustomSettings
+                    }
+
+                    Divider()
+
+                    autoSwapSettings
+                }
+            }
+            .padding()
+        }
+    }
+
+    private var autoSwapSettings: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Toggle(isOn: $inPlaceAutoSwap) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Автоматический обмен по определению языка")
+                        .font(.subheadline)
+                    Text("Определяет язык выделенного текста и переводит в обратную сторону пары. Если язык не входит ни в одну активную пару — используются настройки выше.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            if inPlaceAutoSwap {
+                languagePairsEditor
+            }
+        }
+    }
+
+    private var languagePairsEditor: some View {
+        VStack(alignment: .leading, spacing: 8) {
             HStack {
-                if isRecordingHotkey {
+                Text("Языковые пары")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(.secondary)
+                Spacer()
+                Button {
+                    inPlaceLanguagePairs.append(LanguagePair(primary: "ru", secondary: "en"))
+                } label: {
+                    Label("Добавить пару", systemImage: "plus.circle.fill")
+                        .font(.caption)
+                }
+                .buttonStyle(.bordered)
+            }
+
+            if inPlaceLanguagePairs.isEmpty {
+                Text("Список пар пуст — добавьте хотя бы одну, чтобы автообмен заработал.")
+                    .font(.caption)
+                    .foregroundColor(.orange)
+            } else {
+                ForEach($inPlaceLanguagePairs) { $pair in
+                    languagePairRow(pair: $pair)
+                }
+            }
+        }
+        .padding(.leading, 4)
+    }
+
+    private func languagePairRow(pair: Binding<LanguagePair>) -> some View {
+        HStack(spacing: 8) {
+            Toggle("", isOn: pair.enabled)
+                .toggleStyle(.checkbox)
+                .labelsHidden()
+
+            Picker("", selection: pair.primary) {
+                ForEach(LanguageData.fullLanguages.filter { $0.0 != "auto" }, id: \.0) { code, name in
+                    Text(name).tag(code)
+                }
+            }
+            .labelsHidden()
+            .frame(maxWidth: 160)
+
+            Image(systemName: "arrow.left.arrow.right")
+                .foregroundColor(.secondary)
+
+            Picker("", selection: pair.secondary) {
+                ForEach(LanguageData.fullLanguages.filter { $0.0 != "auto" }, id: \.0) { code, name in
+                    Text(name).tag(code)
+                }
+            }
+            .labelsHidden()
+            .frame(maxWidth: 160)
+
+            Spacer()
+
+            Button {
+                inPlaceLanguagePairs.removeAll { $0.id == pair.wrappedValue.id }
+            } label: {
+                Image(systemName: "trash")
+                    .foregroundColor(.red)
+            }
+            .buttonStyle(.plain)
+            .help("Удалить пару")
+        }
+        .padding(.vertical, 2)
+    }
+
+    private var inPlaceCustomSettings: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Исходный язык:")
+                    .frame(width: 130, alignment: .leading)
+                Picker("", selection: $inPlaceSourceLanguage) {
+                    ForEach(LanguageData.fullLanguages, id: \.0) { code, name in
+                        Text(name).tag(code)
+                    }
+                }
+                .labelsHidden()
+            }
+
+            HStack {
+                Text("Целевой язык:")
+                    .frame(width: 130, alignment: .leading)
+                Picker("", selection: $inPlaceTargetLanguage) {
+                    ForEach(LanguageData.fullLanguages.filter { $0.0 != "auto" }, id: \.0) { code, name in
+                        Text(name).tag(code)
+                    }
+                }
+                .labelsHidden()
+            }
+
+            HStack {
+                Text("Стиль перевода:")
+                    .frame(width: 130, alignment: .leading)
+                Picker("", selection: $inPlacePromptId) {
+                    Text("По умолчанию").tag("")
+                    ForEach(customPrompts) { prompt in
+                        Text("\(prompt.icon) \(prompt.name)").tag(prompt.id)
+                    }
+                }
+                .labelsHidden()
+            }
+        }
+        .padding(.leading, 4)
+    }
+
+    private var hotkeyConflict: Bool {
+        inPlaceEnabled && inPlaceTranslateHotkey == quickTranslateHotkey
+    }
+
+    private func hotkeyDisplay(value: String, target: HotkeyTarget) -> some View {
+        let isActive = isRecordingHotkey && recordingTarget == target
+        return Button(action: { startRecordingHotkey(for: target) }) {
+            HStack {
+                if isActive {
                     ProgressView()
                         .controlSize(.mini)
                         .progressViewStyle(.circular)
                     Text("Нажмите новую комбинацию...")
                         .foregroundColor(.orange)
                 } else {
-                    Text(quickTranslateHotkey)
+                    Text(value)
                         .font(.system(.body, design: .monospaced))
                         .foregroundColor(.blue)
                 }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
-            .background(isRecordingHotkey ? Color.orange.opacity(0.1) : Color.blue.opacity(0.1))
+            .background(isActive ? Color.orange.opacity(0.1) : Color.blue.opacity(0.1))
             .cornerRadius(8)
         }
         .buttonStyle(PlainButtonStyle())
     }
-    
+
+    @ViewBuilder
+    private func hotkeyEditButton(target: HotkeyTarget) -> some View {
+        let isActive = isRecordingHotkey && recordingTarget == target
+        if isActive {
+            Button("Отмена") { stopRecordingHotkey() }
+                .buttonStyle(.bordered)
+        } else {
+            Button("Изменить") { startRecordingHotkey(for: target) }
+                .buttonStyle(.bordered)
+        }
+    }
+
     private var hotkeyInstructions: some View {
         GroupBox(label: Label("📋 Как использовать", systemImage: "info.circle")) {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Быстрый перевод выделенного текста:")
-                    .font(.headline)
-                
-                HStack(alignment: .top, spacing: 8) {
-                    Text("1.")
-                        .font(.system(.caption, design: .monospaced))
-                        .foregroundColor(.blue)
-                    Text("Выделите текст в любом приложении")
-                        .font(.caption)
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Быстрый перевод выделенного текста (в окне):")
+                        .font(.headline)
+
+                    instructionRow(number: "1.", text: "Выделите текст в любом приложении")
+                    instructionRow(number: "2.", text: "Нажмите горячую клавишу \(quickTranslateHotkey)")
+                    instructionRow(number: "3.", text: "Откроется окно переводчика с готовым переводом")
                 }
-                
-                HStack(alignment: .top, spacing: 8) {
-                    Text("2.")
-                        .font(.system(.caption, design: .monospaced))
-                        .foregroundColor(.blue)
-                    Text("Нажмите горячую клавишу \(quickTranslateHotkey)")
-                        .font(.caption)
+
+                if inPlaceEnabled {
+                    Divider()
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Перевод на месте (с заменой текста):")
+                            .font(.headline)
+
+                        instructionRow(number: "1.", text: "Выделите текст в любом приложении")
+                        instructionRow(number: "2.", text: "Нажмите горячую клавишу \(inPlaceTranslateHotkey)")
+                        instructionRow(number: "3.", text: "Выделенный текст будет заменён переводом прямо на месте")
+                        instructionRow(number: "4.", text: "Повторное нажатие \(inPlaceTranslateHotkey) во время перевода отменяет операцию")
+                    }
+
+                    if inPlaceAutoSwap {
+                        Divider()
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Автоматический обмен направлением:")
+                                .font(.subheadline.weight(.semibold))
+                            Text("Приложение само определит язык выделенного текста и переведёт его в обратную сторону пары — например, русский ↔ английский. Если язык не входит ни в одну активную пару, используется обычное направление перевода.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
                 }
-                
-                HStack(alignment: .top, spacing: 8) {
-                    Text("3.")
-                        .font(.system(.caption, design: .monospaced))
-                        .foregroundColor(.blue)
-                    Text("Переводчик автоматически скопирует выделенный текст и начнет перевод")
-                        .font(.caption)
-                }
-                
+
                 Divider()
-                
+
                 HStack {
                     Image(systemName: "info.circle.fill")
                         .foregroundColor(.blue)
-                    Text("Приложение автоматически восстановит предыдущее содержимое буфера обмена")
+                    Text("Приложение автоматически восстанавливает предыдущее содержимое буфера обмена")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
             }
             .padding()
+        }
+    }
+
+    private func instructionRow(number: String, text: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text(number)
+                .font(.system(.caption, design: .monospaced))
+                .foregroundColor(.blue)
+            Text(text)
+                .font(.caption)
         }
     }
     
@@ -608,6 +842,15 @@ struct SettingsView: View {
         loadSettingsFromActiveProfile()
         customPrompts = settingsManager.customPrompts
         quickTranslateHotkey = settingsManager.quickTranslateHotkey
+
+        inPlaceEnabled = settingsManager.inPlaceEnabled
+        inPlaceTranslateHotkey = settingsManager.inPlaceTranslateHotkey
+        inPlaceUseCustomSettings = settingsManager.inPlaceUseCustomSettings
+        inPlaceSourceLanguage = settingsManager.inPlaceSourceLanguage
+        inPlaceTargetLanguage = settingsManager.inPlaceTargetLanguage
+        inPlacePromptId = settingsManager.inPlacePromptId
+        inPlaceAutoSwap = settingsManager.inPlaceAutoSwap
+        inPlaceLanguagePairs = settingsManager.inPlaceLanguagePairs
     }
     
     private func loadSettingsFromActiveProfile() {
@@ -616,13 +859,26 @@ struct SettingsView: View {
     
     private func saveSettings() {
         settingsManager.customPrompts = customPrompts
-        
-        let hotkeyChanged = settingsManager.quickTranslateHotkey != quickTranslateHotkey
+
+        let quickChanged = settingsManager.quickTranslateHotkey != quickTranslateHotkey
+        let inPlaceChanged =
+            settingsManager.inPlaceTranslateHotkey != inPlaceTranslateHotkey
+            || settingsManager.inPlaceEnabled != inPlaceEnabled
+
         settingsManager.quickTranslateHotkey = quickTranslateHotkey
-        
+
+        settingsManager.inPlaceEnabled = inPlaceEnabled
+        settingsManager.inPlaceTranslateHotkey = inPlaceTranslateHotkey
+        settingsManager.inPlaceUseCustomSettings = inPlaceUseCustomSettings
+        settingsManager.inPlaceSourceLanguage = inPlaceSourceLanguage
+        settingsManager.inPlaceTargetLanguage = inPlaceTargetLanguage
+        settingsManager.inPlacePromptId = inPlacePromptId
+        settingsManager.inPlaceAutoSwap = inPlaceAutoSwap
+        settingsManager.inPlaceLanguagePairs = inPlaceLanguagePairs
+
         settingsManager.saveSettings()
-        
-        if hotkeyChanged {
+
+        if quickChanged || inPlaceChanged {
             NotificationCenter.default.post(name: Notification.Name("HotkeyChanged"), object: nil)
         }
     }
@@ -694,18 +950,16 @@ struct SettingsView: View {
         }
     }
     
-    private func startRecordingHotkey() {
-        isRecordingHotkey = true
-        
-        // Удаляем предыдущий монитор если есть
+    private func startRecordingHotkey(for target: HotkeyTarget = .quick) {
         stopRecordingHotkey()
+        recordingTarget = target
         isRecordingHotkey = true
-        
+
         hotkeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [self] event in
             guard isRecordingHotkey else { return event }
-            
+
             var modifiers: [String] = []
-            
+
             if event.modifierFlags.contains(.control) {
                 modifiers.append("⌃")
             }
@@ -718,22 +972,29 @@ struct SettingsView: View {
             if event.modifierFlags.contains(.command) {
                 modifiers.append("⌘")
             }
-            
+
             if !modifiers.isEmpty {
                 let keyChar = KeyCodeMapper.characterForKeyCode(event.keyCode)
-                quickTranslateHotkey = modifiers.joined() + keyChar
-                settingsManager.quickTranslateHotkey = quickTranslateHotkey
+                let combo = modifiers.joined() + keyChar
+
+                switch recordingTarget {
+                case .quick:
+                    quickTranslateHotkey = combo
+                case .inPlace:
+                    inPlaceTranslateHotkey = combo
+                }
+
                 stopRecordingHotkey()
                 return nil
             }
-            
+
             return event
         }
     }
-    
+
     private func stopRecordingHotkey() {
         isRecordingHotkey = false
-        
+
         if let monitor = hotkeyMonitor {
             NSEvent.removeMonitor(monitor)
             hotkeyMonitor = nil

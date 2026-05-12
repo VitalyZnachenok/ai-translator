@@ -18,13 +18,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     weak var settingsWindow: NSWindow?
     weak var mainWindow: NSWindow?
     var sharedSettingsManager = SettingsManager()
-    
+    /// Общий сервис перевода, используется и окном переводчика, и in-place переводом.
+    let sharedTranslationService = TranslationService()
+
     // Event monitors
     var localEventMonitor: Any?
     var globalEventMonitor: Any?
     var eventTap: CFMachPort?
     var runLoopSource: CFRunLoopSource?
-    
+
+    /// Текущая выполняющаяся задача in-place перевода (нужна для отмены повторным нажатием).
+    var inPlaceTask: Task<Void, Never>?
+    /// Оригинальная иконка статус-бара, чтобы вернуть её после индикации статуса.
+    var defaultStatusBarImage: NSImage?
+
     private let logger = Logger(subsystem: "com.vitaly.ai-translator", category: "AppDelegate")
     
     var isLaunchAtLoginEnabled: Bool {
@@ -44,6 +51,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         setupHotKeys()
         requestAccessibilityPermissions()
         setupGlobalHotkey()
+        Task { await sharedTranslationService.configure(with: sharedSettingsManager) }
         NSApp.setActivationPolicy(.accessory)
     }
     
@@ -73,6 +81,7 @@ extension AppDelegate {
         } else {
             button.image = NSImage(systemSymbolName: "globe", accessibilityDescription: "AI Переводчик")
         }
+        defaultStatusBarImage = button.image
         
         button.imagePosition = .imageOnly
         button.target = self
@@ -146,7 +155,17 @@ extension AppDelegate {
             keyEquivalent: ""
         )
         menu.addItem(quickTranslateItem)
-        
+
+        if sharedSettingsManager.inPlaceEnabled {
+            let inPlaceHotkey = sharedSettingsManager.inPlaceTranslateHotkey
+            let inPlaceItem = NSMenuItem(
+                title: "↪︎ Перевести на месте (\(inPlaceHotkey))",
+                action: #selector(inPlaceTranslate),
+                keyEquivalent: ""
+            )
+            menu.addItem(inPlaceItem)
+        }
+
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "⚙️ Настройки...", action: #selector(showSettings), keyEquivalent: ","))
         menu.addItem(NSMenuItem.separator())
@@ -319,11 +338,13 @@ extension AppDelegate {
         • Быстрый доступ и компактный интерфейс
         • Кастомные промпты для разных стилей перевода
         • Быстрый перевод выделенного текста
+        • Перевод выделенного текста "на месте" (с заменой)
         • Автоматическое копирование и восстановление буфера
-        
+
         Горячие клавиши:
         • Cmd+O - открыть переводчик
-        • Настраиваемая горячая клавиша - перевести выделенный текст
+        • Настраиваемая горячая клавиша - перевести выделенный текст в окне
+        • Настраиваемая горячая клавиша - перевести на месте (заменить выделение)
         • Cmd+, - настройки
         • Cmd+Q - выход
         

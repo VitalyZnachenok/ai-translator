@@ -17,6 +17,37 @@ final class SettingsManager {
     var activeProfileId: String = ""
     var customPrompts: [TranslationPrompt] = []
     var quickTranslateHotkey: String = "⌘⇧T"
+
+    // MARK: - In-place translation
+
+    /// Включён ли перевод выделенного текста "на месте" (с заменой через буфер обмена).
+    var inPlaceEnabled: Bool = true
+    /// Горячая клавиша для in-place перевода.
+    var inPlaceTranslateHotkey: String = "⌘⇧T"
+    /// Использовать собственные настройки (язык/промпт) для in-place. Если false — берём last-used из окна переводчика.
+    var inPlaceUseCustomSettings: Bool = false
+    /// Исходный язык для in-place перевода (актуально только при inPlaceUseCustomSettings = true).
+    var inPlaceSourceLanguage: String = "auto"
+    /// Целевой язык для in-place перевода.
+    var inPlaceTargetLanguage: String = "ru"
+    /// Идентификатор кастомного промпта для in-place (пусто = без кастомного промпта).
+    var inPlacePromptId: String = ""
+
+    /// Включено ли автоматическое определение направления перевода по языку выделенного текста.
+    /// Если включено, source/target из настроек переопределяются на основе `inPlaceLanguagePairs`.
+    var inPlaceAutoSwap: Bool = false
+
+    /// Двунаправленные языковые пары для автоматического определения направления.
+    /// По умолчанию — ru ↔ en.
+    var inPlaceLanguagePairs: [LanguagePair] = [
+        LanguagePair(primary: "ru", secondary: "en")
+    ]
+
+    // MARK: - Last-used translation options (для синхронизации окна переводчика и in-place)
+
+    var lastSourceLanguage: String = "auto"
+    var lastTargetLanguage: String = "ru"
+    var lastPromptId: String = ""
     
     // MARK: - Computed Properties
     
@@ -109,6 +140,24 @@ final class SettingsManager {
         }
         
         quickTranslateHotkey = userDefaults.string(forKey: "quickTranslateHotkey") ?? "⌘⇧T"
+
+        inPlaceEnabled = userDefaults.object(forKey: "inPlaceEnabled") as? Bool ?? true
+        inPlaceTranslateHotkey = userDefaults.string(forKey: "inPlaceTranslateHotkey") ?? "⌘⇧T"
+        inPlaceUseCustomSettings = userDefaults.object(forKey: "inPlaceUseCustomSettings") as? Bool ?? false
+        inPlaceSourceLanguage = userDefaults.string(forKey: "inPlaceSourceLanguage") ?? "auto"
+        inPlaceTargetLanguage = userDefaults.string(forKey: "inPlaceTargetLanguage") ?? "ru"
+        inPlacePromptId = userDefaults.string(forKey: "inPlacePromptId") ?? ""
+
+        inPlaceAutoSwap = userDefaults.object(forKey: "inPlaceAutoSwap") as? Bool ?? false
+
+        if let pairsData = userDefaults.data(forKey: "inPlaceLanguagePairs"),
+           let decoded = try? JSONDecoder().decode([LanguagePair].self, from: pairsData) {
+            inPlaceLanguagePairs = decoded
+        }
+
+        lastSourceLanguage = userDefaults.string(forKey: "lastSourceLanguage") ?? "auto"
+        lastTargetLanguage = userDefaults.string(forKey: "lastTargetLanguage") ?? "ru"
+        lastPromptId = userDefaults.string(forKey: "lastPromptId") ?? ""
     }
     
     func saveSettings() {
@@ -123,6 +172,22 @@ final class SettingsManager {
         }
         
         userDefaults.set(quickTranslateHotkey, forKey: "quickTranslateHotkey")
+
+        userDefaults.set(inPlaceEnabled, forKey: "inPlaceEnabled")
+        userDefaults.set(inPlaceTranslateHotkey, forKey: "inPlaceTranslateHotkey")
+        userDefaults.set(inPlaceUseCustomSettings, forKey: "inPlaceUseCustomSettings")
+        userDefaults.set(inPlaceSourceLanguage, forKey: "inPlaceSourceLanguage")
+        userDefaults.set(inPlaceTargetLanguage, forKey: "inPlaceTargetLanguage")
+        userDefaults.set(inPlacePromptId, forKey: "inPlacePromptId")
+
+        userDefaults.set(inPlaceAutoSwap, forKey: "inPlaceAutoSwap")
+        if let pairsData = try? JSONEncoder().encode(inPlaceLanguagePairs) {
+            userDefaults.set(pairsData, forKey: "inPlaceLanguagePairs")
+        }
+
+        userDefaults.set(lastSourceLanguage, forKey: "lastSourceLanguage")
+        userDefaults.set(lastTargetLanguage, forKey: "lastTargetLanguage")
+        userDefaults.set(lastPromptId, forKey: "lastPromptId")
     }
     
     // MARK: - Profile Management
@@ -174,7 +239,68 @@ final class SettingsManager {
         activeProfileId = ""
         customPrompts = []
         quickTranslateHotkey = "⌘⇧T"
+
+        inPlaceEnabled = true
+        inPlaceTranslateHotkey = "⌘⇧T"
+        inPlaceUseCustomSettings = false
+        inPlaceSourceLanguage = "auto"
+        inPlaceTargetLanguage = "ru"
+        inPlacePromptId = ""
+        inPlaceAutoSwap = false
+        inPlaceLanguagePairs = [LanguagePair(primary: "ru", secondary: "en")]
+
+        lastSourceLanguage = "auto"
+        lastTargetLanguage = "ru"
+        lastPromptId = ""
+
         saveSettings()
+    }
+
+    // MARK: - In-place helpers
+
+    /// Информация, как было выбрано направление перевода — для логов и UI-фидбэка.
+    enum InPlaceDirectionSource {
+        case autoSwap(detected: String)
+        case customSettings
+        case lastUsed
+    }
+
+    /// Эффективные параметры перевода для in-place режима с учётом auto-swap по тексту.
+    /// - Parameter selectedText: текст, выделенный пользователем; нужен только если активирован auto-swap.
+    func resolvedInPlaceSettings(for selectedText: String? = nil)
+        -> (source: String, target: String, prompt: TranslationPrompt?, direction: InPlaceDirectionSource)
+    {
+        let baseSource: String
+        let baseTarget: String
+        let basePromptId: String
+        let baseDirection: InPlaceDirectionSource
+
+        if inPlaceUseCustomSettings {
+            baseSource = inPlaceSourceLanguage
+            baseTarget = inPlaceTargetLanguage
+            basePromptId = inPlacePromptId
+            baseDirection = .customSettings
+        } else {
+            baseSource = lastSourceLanguage
+            baseTarget = lastTargetLanguage
+            basePromptId = lastPromptId
+            baseDirection = .lastUsed
+        }
+
+        let prompt = customPrompts.first { $0.id == basePromptId }
+
+        // Auto-swap имеет приоритет: если язык определился и попал в активную пару — берём её направление.
+        if inPlaceAutoSwap,
+           let text = selectedText,
+           let detected = LanguageDetector.detect(text) {
+            for pair in inPlaceLanguagePairs where pair.enabled {
+                if let target = pair.target(for: detected) {
+                    return (detected, target, prompt, .autoSwap(detected: detected))
+                }
+            }
+        }
+
+        return (baseSource, baseTarget, prompt, baseDirection)
     }
     
     func createExampleProfiles() -> [ConnectionProfile] {
