@@ -8,6 +8,23 @@
 import Foundation
 
 struct KeyCodeMapper {
+    /// Разбирает метку клавиши (включая многосимвольные: "Space", "↩", "⇥", "⌫", "⎋"),
+    /// в отличие от keyCodeForCharacter, который принимает только один символ.
+    static func keyCodeForKeyLabel(_ label: String) -> UInt16 {
+        switch label {
+        case "Space", "␣", " ": return 0x31
+        case "↩": return 0x24
+        case "⇥": return 0x30
+        case "⌫": return 0x33
+        case "⎋": return 0x35
+        default:
+            if let last = label.last {
+                return keyCodeForCharacter(last)
+            }
+            return 0x11
+        }
+    }
+
     static func keyCodeForCharacter(_ char: Character) -> UInt16 {
         switch char.uppercased() {
         case "A": return 0x00

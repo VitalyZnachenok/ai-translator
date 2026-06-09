@@ -312,7 +312,7 @@ struct CompactContentView: View {
                     openSettings()
                 }
                 .font(.caption2)
-                .buttonStyle(LinkButtonStyle())
+                .buttonStyle(UnderlinedLinkButtonStyle())
             }
             .padding(8)
             .background(Color.orange.opacity(0.1))

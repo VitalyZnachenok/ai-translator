@@ -39,7 +39,7 @@ extension AppDelegate {
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(hotkeyChanged),
-            name: Notification.Name("HotkeyChanged"),
+            name: .hotkeyChanged,
             object: nil
         )
     }
@@ -58,7 +58,7 @@ extension AppDelegate {
             globalEventMonitor = nil
         }
         
-        NotificationCenter.default.removeObserver(self, name: Notification.Name("HotkeyChanged"), object: nil)
+        NotificationCenter.default.removeObserver(self, name: .hotkeyChanged, object: nil)
     }
     
     func handleKeyEvent(_ event: NSEvent) -> Bool {
@@ -90,7 +90,9 @@ extension AppDelegate {
 
 extension AppDelegate {
     func requestAccessibilityPermissions() {
-        let options = [kAXTrustedCheckOptionPrompt.takeRetainedValue(): true] as CFDictionary
+        // prompt: false — не показываем системный диалог, чтобы не дублировать собственное окно ниже.
+        // Сам вызов всё равно регистрирует приложение в списке «Универсальный доступ».
+        let options = [kAXTrustedCheckOptionPrompt.takeRetainedValue(): false] as CFDictionary
         let accessEnabled = AXIsProcessTrustedWithOptions(options)
         
         if !accessEnabled {
@@ -114,9 +116,42 @@ extension AppDelegate {
         }
     }
     
+    /// Перечитывает строки хоткеев в кэш (keyCode + модификаторы). Вызывать при старте и изменении настроек.
+    func refreshHotkeyCache() {
+        cachedQuickHotkey = parseHotkeyString(sharedSettingsManager.quickTranslateHotkey)
+        cachedInPlaceHotkey = parseHotkeyString(sharedSettingsManager.inPlaceTranslateHotkey)
+    }
+
+    /// Если доступ ещё не выдан, периодически проверяет его и активирует хоткеи сразу после выдачи —
+    /// без необходимости перезапускать приложение.
+    func startAccessibilityMonitoringIfNeeded() {
+        guard !AXIsProcessTrusted() else { return }
+        guard accessibilityPollTimer == nil else { return }
+
+        Self.hotkeyLogger.info("Accessibility not granted — start monitoring")
+
+        let timer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            guard AXIsProcessTrusted() else { return }
+
+            Self.hotkeyLogger.info("Accessibility granted — enabling global hotkey")
+            self.stopAccessibilityMonitoring()
+            self.setupGlobalHotkey()
+        }
+        timer.tolerance = 0.5
+        accessibilityPollTimer = timer
+    }
+
+    func stopAccessibilityMonitoring() {
+        accessibilityPollTimer?.invalidate()
+        accessibilityPollTimer = nil
+    }
+
     func setupGlobalHotkey() {
         stopGlobalHotkey()
-        
+
+        refreshHotkeyCache()
+
         guard AXIsProcessTrusted() else {
             Self.hotkeyLogger.warning("Accessibility not granted")
             return
@@ -133,6 +168,14 @@ extension AppDelegate {
                 guard let refcon else { return Unmanaged.passRetained(event) }
 
                 let appDelegate = Unmanaged<AppDelegate>.fromOpaque(refcon).takeUnretainedValue()
+
+                // Система может отключить tap, если callback подвисает. Реактивируем его.
+                if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                    if let tap = appDelegate.eventTap {
+                        CGEvent.tapEnable(tap: tap, enable: true)
+                    }
+                    return Unmanaged.passRetained(event)
+                }
 
                 if let matched = appDelegate.matchedHotkey(event: event) {
                     DispatchQueue.main.async { [weak appDelegate] in
@@ -177,7 +220,7 @@ extension AppDelegate {
         matchedHotkey(event: event) == .openTranslator
     }
 
-    /// Сопоставляет событие клавиатуры с одним из настроенных хоткеев.
+    /// Сопоставляет событие клавиатуры с одним из настроенных хоткеев, используя кэш.
     /// Если совпали оба (одинаковая комбинация), приоритет — у in-place перевода, поскольку он применяется в активном поле.
     func matchedHotkey(event: CGEvent) -> MatchedHotkey? {
         let flags = event.flags
@@ -189,34 +232,37 @@ extension AppDelegate {
         if flags.contains(.maskAlternate) { currentModifiers.insert(.maskAlternate) }
         if flags.contains(.maskControl) { currentModifiers.insert(.maskControl) }
 
-        if sharedSettingsManager.inPlaceEnabled {
-            let (ipKey, ipMods) = parseHotkeyString(sharedSettingsManager.inPlaceTranslateHotkey)
-            if keyCode == ipKey && currentModifiers == ipMods {
-                return .inPlace
-            }
+        if sharedSettingsManager.inPlaceEnabled,
+           keyCode == cachedInPlaceHotkey.keyCode,
+           currentModifiers == cachedInPlaceHotkey.modifiers {
+            return .inPlace
         }
 
-        let (qKey, qMods) = parseHotkeyString(sharedSettingsManager.quickTranslateHotkey)
-        if keyCode == qKey && currentModifiers == qMods {
+        if keyCode == cachedQuickHotkey.keyCode,
+           currentModifiers == cachedQuickHotkey.modifiers {
             return .openTranslator
         }
 
         return nil
     }
     
-    func parseHotkeyString(_ hotkey: String) -> (Int64, CGEventFlags) {
+    func parseHotkeyString(_ hotkey: String) -> (keyCode: Int64, modifiers: CGEventFlags) {
         var modifiers: CGEventFlags = []
-        var keyCode: Int64 = 0x11 // T по умолчанию
-        
+
         if hotkey.contains("⌘") { modifiers.insert(.maskCommand) }
         if hotkey.contains("⇧") { modifiers.insert(.maskShift) }
         if hotkey.contains("⌥") { modifiers.insert(.maskAlternate) }
         if hotkey.contains("⌃") { modifiers.insert(.maskControl) }
-        
-        if let lastChar = hotkey.last {
-            keyCode = Int64(KeyCodeMapper.keyCodeForCharacter(lastChar))
-        }
-        
+
+        // Убираем символы модификаторов — остаётся метка клавиши (может быть многосимвольной, например "Space").
+        let keyLabel = hotkey
+            .replacingOccurrences(of: "⌘", with: "")
+            .replacingOccurrences(of: "⇧", with: "")
+            .replacingOccurrences(of: "⌥", with: "")
+            .replacingOccurrences(of: "⌃", with: "")
+
+        let keyCode = Int64(KeyCodeMapper.keyCodeForKeyLabel(keyLabel))
+
         return (keyCode, modifiers)
     }
 }
@@ -226,55 +272,52 @@ extension AppDelegate {
 extension AppDelegate {
     @objc func quickTranslateFromClipboard() {
         Self.hotkeyLogger.debug("Quick translate triggered")
-        
-        let oldClipboard = NSPasteboard.general.string(forType: .string)
-        
-        NSPasteboard.general.clearContents()
-        simulateCopy()
-        
+
         Task { @MainActor [weak self] in
             guard let self else { return }
-            
-            try? await Task.sleep(for: .milliseconds(200))
-            
-            guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else {
-                // Восстанавливаем буфер обмена если текст не был скопирован
-                if let oldText = oldClipboard {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(oldText, forType: .string)
-                }
-                
+
+            let pasteboard = NSPasteboard.general
+            let oldClipboard = pasteboard.string(forType: .string)
+
+            // Сначала дожидаемся, пока пользователь отпустит модификаторы хоткея,
+            // иначе синтетический ⌘C объединится с зажатым ⇧ и станет ⌘⇧C (не «Копировать»).
+            await self.waitForModifierKeysReleased()
+
+            pasteboard.clearContents()
+            // Базовый счётчик снимаем ПОСЛЕ clearContents(): сам clearContents() увеличивает
+            // changeCount, поэтому если снять до — ожидание сработает мгновенно, не дождавшись копии.
+            let baselineChangeCount = pasteboard.changeCount
+            self.simulateCopy()
+
+            // Ждём реального изменения буфера вместо фиксированной задержки.
+            let copied = await self.waitForClipboardChange(initial: baselineChangeCount, timeout: 1.0)
+
+            guard copied, let text = pasteboard.string(forType: .string), !text.isEmpty else {
+                await self.restoreClipboard(oldClipboard)
                 Self.hotkeyLogger.warning("No text selected for translation")
-                
-                let alert = NSAlert()
-                alert.messageText = "Нет выделенного текста"
-                alert.informativeText = "Выделите текст для перевода и попробуйте снова"
-                alert.alertStyle = .warning
-                alert.addButton(withTitle: "OK")
-                alert.runModal()
+                self.notifyError(title: "Нет выделенного текста",
+                                 message: "Выделите текст для перевода и попробуйте снова")
                 return
             }
-            
+
             Self.hotkeyLogger.debug("Text copied for translation: \(text.prefix(50))...")
-            
+
             UserDefaults.standard.set(text, forKey: "pendingTranslationText")
-            
+
             self.showMainWindow()
-            
+
             try? await Task.sleep(for: .milliseconds(500))
-            
+
             NotificationCenter.default.post(
-                name: Notification.Name("QuickTranslateText"),
+                name: .quickTranslateText,
                 object: nil,
                 userInfo: ["text": text]
             )
-            
-            // Восстанавливаем буфер обмена
+
+            // Восстанавливаем буфер обмена.
             if let oldText = oldClipboard, oldText != text {
                 try? await Task.sleep(for: .seconds(1))
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(oldText, forType: .string)
-                Self.hotkeyLogger.debug("Clipboard restored")
+                await self.restoreClipboard(oldText)
             }
         }
     }
@@ -341,12 +384,16 @@ extension AppDelegate {
         Self.hotkeyLogger.debug("In-place translation started")
 
         let pasteboard = NSPasteboard.general
-        let originalChangeCount = pasteboard.changeCount
         let originalText = pasteboard.string(forType: .string)
 
         setMenuBarStatus(.busy)
 
+        // Дожидаемся, пока пользователь отпустит модификаторы хоткея, иначе
+        // синтетический ⌘C объединится с зажатым ⇧ и станет ⌘⇧C (не «Копировать»).
+        await waitForModifierKeysReleased()
+
         // 1. Симулируем Cmd+C и ждём, пока буфер реально обновится.
+        let originalChangeCount = pasteboard.changeCount
         simulateCopy()
         let copied = await waitForClipboardChange(initial: originalChangeCount, timeout: 1.0)
 
@@ -420,11 +467,34 @@ extension AppDelegate {
         // 4. Восстанавливаем оригинальный буфер обмена через небольшую паузу.
         try? await Task.sleep(for: .milliseconds(400))
         await restoreClipboard(originalText)
+
+        TranslationHistoryStore.shared.add(
+            sourceText: selectedText,
+            translatedText: translated,
+            sourceLanguage: resolved.source,
+            targetLanguage: resolved.target,
+            origin: "Перевод на месте"
+        )
+
         setMenuBarStatus(.success)
         Self.hotkeyLogger.info("In-place translation completed")
     }
 
     // MARK: - Helpers
+
+    /// Дожидается, пока пользователь отпустит модификаторы хоткея (⌘/⇧/⌥/⌃),
+    /// чтобы синтезированный ⌘C не объединился с зажатым ⇧ и не превратился в ⌘⇧C.
+    /// Ограничено таймаутом — если клавиши держат дольше, всё равно продолжаем.
+    private func waitForModifierKeysReleased(timeout: TimeInterval = 0.6) async {
+        let watched: CGEventFlags = [.maskCommand, .maskShift, .maskAlternate, .maskControl]
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if Task.isCancelled { return }
+            let current = CGEventSource.flagsState(.combinedSessionState)
+            if current.intersection(watched).isEmpty { return }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+    }
 
     /// Ждёт, пока NSPasteboard.changeCount превысит исходное значение, что означает, что система действительно обновила буфер.
     private func waitForClipboardChange(initial: Int, timeout: TimeInterval) async -> Bool {

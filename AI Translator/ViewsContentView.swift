@@ -383,7 +383,7 @@ struct ContentView: View {
             HStack {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundColor(.orange)
-                Text("Настройте подключение к OpenWebUI в настройках")
+                Text("Настройте подключение к API в настройках")
                     .foregroundColor(.orange)
                 
                 Spacer()
@@ -391,7 +391,7 @@ struct ContentView: View {
                 Button("Открыть настройки") {
                     showingSettings = true
                 }
-                .buttonStyle(LinkButtonStyle())
+                .buttonStyle(UnderlinedLinkButtonStyle())
             }
             .padding()
             .background(Color.orange.opacity(0.1))

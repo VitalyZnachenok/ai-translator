@@ -534,7 +534,7 @@ struct SettingsView: View {
                     quickTranslateHotkey = "⌘⇧T"
                     settingsManager.quickTranslateHotkey = quickTranslateHotkey
                 }
-                .buttonStyle(LinkButtonStyle())
+                .buttonStyle(UnderlinedLinkButtonStyle())
             }
             .padding()
         }
@@ -879,7 +879,7 @@ struct SettingsView: View {
         settingsManager.saveSettings()
 
         if quickChanged || inPlaceChanged {
-            NotificationCenter.default.post(name: Notification.Name("HotkeyChanged"), object: nil)
+            NotificationCenter.default.post(name: .hotkeyChanged, object: nil)
         }
     }
     

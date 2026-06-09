@@ -17,7 +17,7 @@ struct ProfileEditView: View {
     @State private var apiToken = ""
     @State private var modelName = ""
     @State private var temperature = 0.3
-    @State private var maxTokens = 1024
+    @State private var maxTokens = 2048
     @State private var icon = "🌐"
     
     @State private var isTestingConnection = false
@@ -29,6 +29,8 @@ struct ProfileEditView: View {
     @State private var canLoadModels = false
     @State private var useManualModel = false
     @State private var manualModelName = ""
+    /// Стабильный идентификатор профиля: для существующего — его id, для нового — заранее сгенерированный.
+    @State private var profileId = UUID().uuidString
     
     @Environment(\.dismiss) private var dismiss
     
@@ -399,6 +401,7 @@ struct ProfileEditView: View {
     
     private func initializeForm() {
         if let profile {
+            profileId = profile.id
             name = profile.name
             apiUrl = profile.apiUrl
             apiToken = profile.apiToken
@@ -410,7 +413,7 @@ struct ProfileEditView: View {
         } else {
             name = "Новый профиль"
             temperature = 0.3
-            maxTokens = 1024
+            maxTokens = 2048
             icon = "🌐"
         }
         
@@ -425,7 +428,7 @@ struct ProfileEditView: View {
         let finalModelName = useManualModel ? manualModelName.trimmingCharacters(in: .whitespacesAndNewlines) : modelName
         
         let newProfile = ConnectionProfile(
-            id: profile?.id ?? UUID().uuidString,
+            id: profileId,
             name: name,
             apiUrl: apiUrl.trimmingCharacters(in: .whitespacesAndNewlines),
             apiToken: apiToken.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -453,17 +456,12 @@ struct ProfileEditView: View {
     
     private func loadModels() {
         guard canLoadModels else { return }
-        
-        let cacheKey = "cached_models_\(apiUrl)_\(apiToken.prefix(10))"
-        
-        if let cachedData = UserDefaults.standard.data(forKey: cacheKey),
-           let cachedModels = try? JSONDecoder().decode([OpenWebUIModel].self, from: cachedData),
-           !cachedModels.isEmpty {
-            
+
+        if let cachedModels = ModelsCache.load(for: profileId) {
             availableModels = cachedModels
-            
+
             Task {
-                await loadModelsFromAPI(cacheKey: cacheKey)
+                await loadModelsFromAPI()
             }
             return
         }
@@ -472,11 +470,11 @@ struct ProfileEditView: View {
         modelsError = ""
         
         Task {
-            await loadModelsFromAPI(cacheKey: cacheKey)
+            await loadModelsFromAPI()
         }
     }
     
-    private func loadModelsFromAPI(cacheKey: String) async {
+    private func loadModelsFromAPI() async {
         do {
             let models = try await modelService.fetchAvailableModels(
                 apiUrl: apiUrl.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -486,10 +484,8 @@ struct ProfileEditView: View {
             await MainActor.run {
                 self.availableModels = models
                 self.isLoadingModels = false
-                
-                if let encodedModels = try? JSONEncoder().encode(models) {
-                    UserDefaults.standard.set(encodedModels, forKey: cacheKey)
-                }
+
+                ModelsCache.save(models, for: profileId)
                 
                 if !modelName.isEmpty && !models.contains(where: { $0.id == modelName }) {
                     useManualModel = true
@@ -564,14 +560,13 @@ struct ProfileEditView: View {
     }
     
     private func clearModelsCache() {
-        let cacheKey = "cached_models_\(apiUrl)_\(apiToken.prefix(10))"
-        UserDefaults.standard.removeObject(forKey: cacheKey)
+        ModelsCache.clear(for: profileId)
         availableModels = []
         
         if canLoadModels {
             isLoadingModels = true
             Task {
-                await loadModelsFromAPI(cacheKey: cacheKey)
+                await loadModelsFromAPI()
             }
         }
     }

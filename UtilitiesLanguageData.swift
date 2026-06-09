@@ -8,41 +8,32 @@
 import Foundation
 
 struct LanguageData {
-    static let fullLanguages = [
-        ("auto", "🌐 Авто-определение"),
-        ("en", "🇺🇸 English"),
-        ("ru", "🇷🇺 Русский"),
-        ("zh", "🇨🇳 中文"),
-        ("es", "🇪🇸 Español"),
-        ("fr", "🇫🇷 Français"),
-        ("de", "🇩🇪 Deutsch"),
-        ("ja", "🇯🇵 日本語"),
-        ("ko", "🇰🇷 한국어"),
-        ("it", "🇮🇹 Italiano"),
-        ("pt", "🇵🇹 Português"),
-        ("ar", "🇸🇦 العربية"),
-        ("hi", "🇮🇳 हिन्दी"),
-        ("tr", "🇹🇷 Türkçe"),
-        ("uk", "🇺🇦 Українська"),
-        ("pl", "🇵🇱 Polski")
+    /// Единый источник: (код, полное название, компактное название).
+    static let languages: [(code: String, full: String, compact: String)] = [
+        ("auto", "🌐 Авто-определение", "🌐 Авто"),
+        ("en", "🇺🇸 English", "🇺🇸 EN"),
+        ("ru", "🇷🇺 Русский", "🇷🇺 RU"),
+        ("zh", "🇨🇳 中文", "🇨🇳 ZH"),
+        ("es", "🇪🇸 Español", "🇪🇸 ES"),
+        ("fr", "🇫🇷 Français", "🇫🇷 FR"),
+        ("de", "🇩🇪 Deutsch", "🇩🇪 DE"),
+        ("ja", "🇯🇵 日本語", "🇯🇵 JA"),
+        ("ko", "🇰🇷 한국어", "🇰🇷 KO"),
+        ("it", "🇮🇹 Italiano", "🇮🇹 IT"),
+        ("pt", "🇵🇹 Português", "🇵🇹 PT"),
+        ("ar", "🇸🇦 العربية", "🇸🇦 AR"),
+        ("hi", "🇮🇳 हिन्दी", "🇮🇳 HI"),
+        ("tr", "🇹🇷 Türkçe", "🇹🇷 TR"),
+        ("uk", "🇺🇦 Українська", "🇺🇦 UA"),
+        ("pl", "🇵🇱 Polski", "🇵🇱 PL")
     ]
-    
-    static let compactLanguages = [
-        ("auto", "🌐 Авто"),
-        ("en", "🇺🇸 EN"),
-        ("ru", "🇷🇺 RU"),
-        ("zh", "🇨🇳 ZH"),
-        ("es", "🇪🇸 ES"),
-        ("fr", "🇫🇷 FR"),
-        ("de", "🇩🇪 DE"),
-        ("ja", "🇯🇵 JA"),
-        ("ko", "🇰🇷 KO"),
-        ("it", "🇮🇹 IT"),
-        ("pt", "🇵🇹 PT"),
-        ("ar", "🇸🇦 AR"),
-        ("hi", "🇮🇳 HI"),
-        ("tr", "🇹🇷 TR"),
-        ("uk", "🇺🇦 UA"),
-        ("pl", "🇵🇱 PL")
-    ]
+
+    static let fullLanguages: [(String, String)] = languages.map { ($0.code, $0.full) }
+
+    static let compactLanguages: [(String, String)] = languages.map { ($0.code, $0.compact) }
+
+    /// Возвращает полное отображаемое имя по коду языка (или сам код, если не найден).
+    static func displayName(for code: String) -> String {
+        languages.first { $0.code == code }?.full ?? code
+    }
 }

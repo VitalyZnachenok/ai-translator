@@ -152,6 +152,13 @@ final class TranslationViewModel {
                 
                 outputText = result
                 isTranslating = false
+                TranslationHistoryStore.shared.add(
+                    sourceText: inputText,
+                    translatedText: result,
+                    sourceLanguage: selectedSourceLanguage,
+                    targetLanguage: selectedTargetLanguage,
+                    origin: withExplanation ? "Окно (с пояснениями)" : "Окно переводчика"
+                )
                 logger.debug("Translation completed successfully")
             } catch {
                 logger.error("Translation failed: \(error.localizedDescription)")
@@ -287,7 +294,7 @@ final class TranslationViewModel {
         removeQuickTranslateListener()
         
         notificationObserver = NotificationCenter.default.addObserver(
-            forName: Notification.Name("QuickTranslateText"),
+            forName: .quickTranslateText,
             object: nil,
             queue: .main
         ) { [weak self] notification in

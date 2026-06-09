@@ -88,7 +88,7 @@ final class SettingsManager {
     }
     
     var maxTokens: Int {
-        get { activeProfile?.maxTokens ?? 1024 }
+        get { activeProfile?.maxTokens ?? 2048 }
         set {
             guard var profile = activeProfile else { return }
             profile.maxTokens = newValue
@@ -126,6 +126,8 @@ final class SettingsManager {
         if let profilesData = userDefaults.data(forKey: "connectionProfiles"),
            let decodedProfiles = try? JSONDecoder().decode([ConnectionProfile].self, from: profilesData) {
             connectionProfiles = decodedProfiles
+            migrateTokensToKeychainIfNeeded(from: profilesData)
+            loadTokensFromKeychain()
         }
         
         activeProfileId = userDefaults.string(forKey: "activeProfileId") ?? ""
@@ -161,6 +163,11 @@ final class SettingsManager {
     }
     
     func saveSettings() {
+        // Токены пишем в Keychain, а сами профили (без токенов) — в UserDefaults.
+        for profile in connectionProfiles {
+            KeychainHelper.setToken(profile.apiToken, for: profile.id)
+        }
+
         if let encodedProfiles = try? JSONEncoder().encode(connectionProfiles) {
             userDefaults.set(encodedProfiles, forKey: "connectionProfiles")
         }
@@ -206,7 +213,9 @@ final class SettingsManager {
     
     func deleteProfile(_ profile: ConnectionProfile) {
         connectionProfiles.removeAll { $0.id == profile.id }
-        
+        KeychainHelper.deleteToken(for: profile.id)
+        ModelsCache.clear(for: profile.id)
+
         if activeProfileId == profile.id {
             activeProfileId = connectionProfiles.first?.id ?? ""
         }
@@ -311,7 +320,7 @@ final class SettingsManager {
                 apiToken: "",
                 modelName: "gpt-4o-mini",
                 temperature: 0.3,
-                maxTokens: 1024,
+                maxTokens: 2048,
                 icon: "🤖"
             ),
             ConnectionProfile(
@@ -320,7 +329,7 @@ final class SettingsManager {
                 apiToken: "ollama",
                 modelName: "llama3.2:latest",
                 temperature: 0.3,
-                maxTokens: 1024,
+                maxTokens: 2048,
                 icon: "🦙"
             ),
             ConnectionProfile(
@@ -329,7 +338,7 @@ final class SettingsManager {
                 apiToken: "",
                 modelName: "claude-3-haiku-20240307",
                 temperature: 0.3,
-                maxTokens: 1024,
+                maxTokens: 2048,
                 icon: "🧠"
             ),
             ConnectionProfile(
@@ -338,7 +347,7 @@ final class SettingsManager {
                 apiToken: "",
                 modelName: "meta-llama/llama-3.2-3b-instruct:free",
                 temperature: 0.3,
-                maxTokens: 1024,
+                maxTokens: 2048,
                 icon: "🚀"
             )
         ]
@@ -349,6 +358,40 @@ final class SettingsManager {
     private func updateActiveProfile(_ profile: ConnectionProfile) {
         if let index = connectionProfiles.firstIndex(where: { $0.id == profile.id }) {
             connectionProfiles[index] = profile
+        }
+    }
+
+    // MARK: - Token storage (Keychain)
+
+    /// Legacy-формат профиля: содержит apiToken, который раньше сохранялся прямо в UserDefaults.
+    private struct LegacyProfileToken: Decodable {
+        let id: String
+        let apiToken: String?
+    }
+
+    /// Переносит токены из старого формата (UserDefaults) в Keychain ровно один раз.
+    private func migrateTokensToKeychainIfNeeded(from profilesData: Data) {
+        guard !userDefaults.bool(forKey: "tokensMigratedToKeychain") else { return }
+
+        if let legacy = try? JSONDecoder().decode([LegacyProfileToken].self, from: profilesData) {
+            for item in legacy {
+                if let token = item.apiToken, !token.isEmpty {
+                    KeychainHelper.setToken(token, for: item.id)
+                }
+            }
+        }
+
+        userDefaults.set(true, forKey: "tokensMigratedToKeychain")
+        // Пересохраняем профили уже без токенов (CodingKeys их не пишет).
+        if let encodedProfiles = try? JSONEncoder().encode(connectionProfiles) {
+            userDefaults.set(encodedProfiles, forKey: "connectionProfiles")
+        }
+    }
+
+    /// Заполняет apiToken каждого профиля значением из Keychain.
+    private func loadTokensFromKeychain() {
+        for index in connectionProfiles.indices {
+            connectionProfiles[index].apiToken = KeychainHelper.token(for: connectionProfiles[index].id) ?? ""
         }
     }
     
@@ -365,7 +408,7 @@ final class SettingsManager {
         let temperature = savedTemperature == 0 ? 0.3 : savedTemperature
         
         let savedMaxTokens = userDefaults.integer(forKey: "maxTokens")
-        let maxTokens = savedMaxTokens == 0 ? 1024 : savedMaxTokens
+        let maxTokens = savedMaxTokens == 0 ? 2048 : savedMaxTokens
         
         let defaultProfile = ConnectionProfile(
             name: "Основной профиль",

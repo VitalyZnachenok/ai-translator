@@ -17,6 +17,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var popover: NSPopover?
     weak var settingsWindow: NSWindow?
     weak var mainWindow: NSWindow?
+    weak var historyWindow: NSWindow?
     var sharedSettingsManager = SettingsManager()
     /// Общий сервис перевода, используется и окном переводчика, и in-place переводом.
     let sharedTranslationService = TranslationService()
@@ -27,10 +28,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var eventTap: CFMachPort?
     var runLoopSource: CFRunLoopSource?
 
+    /// Таймер, отслеживающий выдачу Accessibility-доступа, чтобы активировать хоткеи без перезапуска.
+    var accessibilityPollTimer: Timer?
+
     /// Текущая выполняющаяся задача in-place перевода (нужна для отмены повторным нажатием).
     var inPlaceTask: Task<Void, Never>?
     /// Оригинальная иконка статус-бара, чтобы вернуть её после индикации статуса.
     var defaultStatusBarImage: NSImage?
+
+    /// Распарсенные хоткеи, кэшируются при старте и при изменении настроек,
+    /// чтобы не разбирать строки на каждое нажатие клавиши в системе (горячий путь event tap).
+    var cachedQuickHotkey: (keyCode: Int64, modifiers: CGEventFlags) = (0x11, .maskCommand)
+    var cachedInPlaceHotkey: (keyCode: Int64, modifiers: CGEventFlags) = (0x11, [.maskCommand, .maskShift])
 
     private let logger = Logger(subsystem: "com.vitaly.ai-translator", category: "AppDelegate")
     
@@ -43,6 +52,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     deinit {
         removeEventMonitors()
         stopGlobalHotkey()
+        accessibilityPollTimer?.invalidate()
     }
     
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -51,6 +61,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         setupHotKeys()
         requestAccessibilityPermissions()
         setupGlobalHotkey()
+        startAccessibilityMonitoringIfNeeded()
         Task { await sharedTranslationService.configure(with: sharedSettingsManager) }
         NSApp.setActivationPolicy(.accessory)
     }
@@ -58,6 +69,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         logger.info("Application terminating")
         removeEventMonitors()
+        stopAccessibilityMonitoring()
         settingsWindow = nil
         mainWindow = nil
         popover = nil
@@ -315,19 +327,49 @@ extension AppDelegate {
     }
     
     @objc private func showHistory() {
-        let alert = NSAlert()
-        alert.messageText = "История переводов"
-        alert.informativeText = "Функция истории переводов будет добавлена в следующей версии"
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: "OK")
-        alert.runModal()
+        if let existingWindow = historyWindow, existingWindow.isVisible {
+            existingWindow.makeKeyAndOrderFront(nil)
+            NSApp.setActivationPolicy(.regular)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
+        closePopover()
+
+        let newWindow = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 680),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+
+        newWindow.title = "История переводов"
+        newWindow.isReleasedWhenClosed = false
+        newWindow.minSize = NSSize(width: 560, height: 480)
+
+        let historyView = HistoryView { [weak newWindow] in
+            newWindow?.close()
+        }
+
+        newWindow.contentView = NSHostingView(rootView: historyView)
+        newWindow.delegate = self
+
+        historyWindow = newWindow
+
+        newWindow.center()
+        newWindow.makeKeyAndOrderFront(nil)
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
     }
     
     @objc private func showAbout() {
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "—"
+
         let aboutPanel = NSAlert()
         aboutPanel.messageText = "AI Переводчик"
         aboutPanel.informativeText = """
-        Версия 1.4
+        Версия \(version) (\(build))
         
         Умный переводчик с поддержкой OpenWebUI API
         
@@ -376,9 +418,13 @@ extension AppDelegate: NSWindowDelegate {
             settingsWindow = nil
         } else if window == mainWindow {
             mainWindow = nil
+        } else if window == historyWindow {
+            historyWindow = nil
         }
         
-        let hasVisibleWindows = (mainWindow?.isVisible == true) || (settingsWindow?.isVisible == true)
+        let hasVisibleWindows = (mainWindow?.isVisible == true)
+            || (settingsWindow?.isVisible == true)
+            || (historyWindow?.isVisible == true)
         if !hasVisibleWindows {
             NSApp.setActivationPolicy(.accessory)
         }

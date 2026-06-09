@@ -16,6 +16,8 @@
     активном окне (поддерживается в любом приложении, где работает
     `⌘C`/`⌘V`).
 - Автосохранение и восстановление содержимого буфера обмена.
+- История переводов (последние 100) с поиском, копированием и удалением.
+- API-токены хранятся в системном Keychain, а не в открытом виде в настройках.
 
 ## Горячие клавиши
 
@@ -73,8 +75,14 @@
 - `ServicesTranslationService.swift` — HTTP-клиент для OpenAI-совместимых API.
 - `AI Translator/ModelsLanguagePair.swift` — модель двунаправленной языковой
   пары для in-place перевода.
+- `AI Translator/ModelsTranslationHistory.swift` — модель и хранилище истории
+  переводов.
 - `AI Translator/UtilitiesLanguageDetector.swift` — обёртка над
   `NLLanguageRecognizer` для определения языка.
+- `AI Translator/UtilitiesKeychainHelper.swift` — безопасное хранение токенов
+  в Keychain.
+- `AI Translator/UtilitiesModelsCache.swift` — кэш списка моделей по
+  идентификатору профиля.
 - `AI Translator/Views*` — SwiftUI-вьюхи (окно, popover, настройки).
 - `AI Translator/ViewModelsTranslationViewModel.swift` — общий ViewModel
   логики перевода.
