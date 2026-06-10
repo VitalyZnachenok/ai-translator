@@ -97,16 +97,16 @@ extension AppDelegate {
         
         if !accessEnabled {
             let alert = NSAlert()
-            alert.messageText = "Требуется разрешение"
-            alert.informativeText = """
+            alert.messageText = String(localized: "Требуется разрешение")
+            alert.informativeText = String(localized: """
             Для использования глобальных горячих клавиш приложению требуется доступ к универсальному доступу.
             
             Пожалуйста, добавьте AI Переводчик в:
             Системные настройки → Защита и безопасность → Конфиденциальность → Универсальный доступ
-            """
+            """)
             alert.alertStyle = .warning
-            alert.addButton(withTitle: "Открыть настройки")
-            alert.addButton(withTitle: "Позже")
+            alert.addButton(withTitle: String(localized: "Открыть настройки"))
+            alert.addButton(withTitle: String(localized: "Позже"))
             
             if alert.runModal() == .alertFirstButtonReturn {
                 if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
@@ -295,8 +295,8 @@ extension AppDelegate {
             guard copied, let text = pasteboard.string(forType: .string), !text.isEmpty else {
                 await self.restoreClipboard(oldClipboard)
                 Self.hotkeyLogger.warning("No text selected for translation")
-                self.notifyError(title: "Нет выделенного текста",
-                                 message: "Выделите текст для перевода и попробуйте снова")
+                self.notifyError(title: String(localized: "Нет выделенного текста"),
+                                 message: String(localized: "Выделите текст для перевода и попробуйте снова"))
                 return
             }
 
@@ -368,8 +368,8 @@ extension AppDelegate {
         }
 
         guard sharedSettingsManager.isConfigured else {
-            notifyError(title: "Перевод не настроен",
-                        message: "Сначала настройте профиль подключения в окне настроек.")
+            notifyError(title: String(localized: "Перевод не настроен"),
+                        message: String(localized: "Сначала настройте профиль подключения в окне настроек."))
             return
         }
 
@@ -406,8 +406,8 @@ extension AppDelegate {
         guard copied, let selectedText = pasteboard.string(forType: .string), !selectedText.isEmpty else {
             await restoreClipboard(originalText)
             setMenuBarStatus(.error)
-            notifyError(title: "Нет выделенного текста",
-                        message: "Выделите текст для перевода и попробуйте снова.")
+            notifyError(title: String(localized: "Нет выделенного текста"),
+                        message: String(localized: "Выделите текст для перевода и попробуйте снова."))
             return
         }
 
@@ -439,7 +439,7 @@ extension AppDelegate {
         } catch {
             await restoreClipboard(originalText)
             setMenuBarStatus(.error)
-            notifyError(title: "Ошибка перевода", message: error.localizedDescription)
+            notifyError(title: String(localized: "Ошибка перевода"), message: error.localizedDescription)
             return
         }
 
@@ -459,8 +459,8 @@ extension AppDelegate {
         if !pasted {
             // Не смогли подтвердить вставку — оставляем перевод в буфере, чтобы пользователь мог вставить вручную.
             setMenuBarStatus(.error)
-            notifyError(title: "Не удалось вставить перевод",
-                        message: "Перевод скопирован в буфер обмена — попробуйте вставить вручную (⌘V).")
+            notifyError(title: String(localized: "Не удалось вставить перевод"),
+                        message: String(localized: "Перевод скопирован в буфер обмена — попробуйте вставить вручную (⌘V)."))
             return
         }
 

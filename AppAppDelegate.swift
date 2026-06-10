@@ -157,12 +157,12 @@ extension AppDelegate {
     private func showContextMenu() {
         let menu = NSMenu()
         
-        menu.addItem(NSMenuItem(title: "🌐 Открыть переводчик", action: #selector(showMainWindow), keyEquivalent: "o"))
+        menu.addItem(NSMenuItem(title: String(localized: "🌐 Открыть переводчик"), action: #selector(showMainWindow), keyEquivalent: "o"))
         menu.addItem(NSMenuItem.separator())
         
         let hotkeyDisplay = sharedSettingsManager.quickTranslateHotkey
         let quickTranslateItem = NSMenuItem(
-            title: "⚡ Перевести выделенный текст (\(hotkeyDisplay))",
+            title: String(localized: "⚡ Перевести выделенный текст (\(hotkeyDisplay))"),
             action: #selector(quickTranslateFromClipboard),
             keyEquivalent: ""
         )
@@ -171,7 +171,7 @@ extension AppDelegate {
         if sharedSettingsManager.inPlaceEnabled {
             let inPlaceHotkey = sharedSettingsManager.inPlaceTranslateHotkey
             let inPlaceItem = NSMenuItem(
-                title: "↪︎ Перевести на месте (\(inPlaceHotkey))",
+                title: String(localized: "↪︎ Перевести на месте (\(inPlaceHotkey))"),
                 action: #selector(inPlaceTranslate),
                 keyEquivalent: ""
             )
@@ -179,20 +179,20 @@ extension AppDelegate {
         }
 
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "⚙️ Настройки...", action: #selector(showSettings), keyEquivalent: ","))
+        menu.addItem(NSMenuItem(title: String(localized: "⚙️ Настройки..."), action: #selector(showSettings), keyEquivalent: ","))
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "📋 История переводов", action: #selector(showHistory), keyEquivalent: "h"))
+        menu.addItem(NSMenuItem(title: String(localized: "📋 История переводов"), action: #selector(showHistory), keyEquivalent: "h"))
         menu.addItem(NSMenuItem.separator())
         
         let launchAtLoginTitle = isLaunchAtLoginEnabled
-            ? "✅ Запуск при старте системы"
-            : "⬜ Запуск при старте системы"
+            ? String(localized: "✅ Запуск при старте системы")
+            : String(localized: "⬜ Запуск при старте системы")
         menu.addItem(NSMenuItem(title: launchAtLoginTitle, action: #selector(toggleLaunchAtLogin), keyEquivalent: ""))
         
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "📖 О программе", action: #selector(showAbout), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: String(localized: "📖 О программе"), action: #selector(showAbout), keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "❌ Выйти", action: #selector(quit), keyEquivalent: "q"))
+        menu.addItem(NSMenuItem(title: String(localized: "❌ Выйти"), action: #selector(quit), keyEquivalent: "q"))
         
         for item in menu.items {
             item.target = self
@@ -256,7 +256,7 @@ extension AppDelegate {
             defer: false
         )
         
-        newWindow.title = "AI Переводчик"
+        newWindow.title = String(localized: "AI Переводчик")
         newWindow.isReleasedWhenClosed = false
         newWindow.minSize = NSSize(width: 700, height: 600)
         newWindow.maxSize = NSSize(width: 1200, height: 1000)
@@ -292,7 +292,7 @@ extension AppDelegate {
             defer: false
         )
         
-        newWindow.title = "Настройки AI Переводчика"
+        newWindow.title = String(localized: "Настройки AI Переводчика")
         newWindow.isReleasedWhenClosed = false
         newWindow.minSize = NSSize(width: 680, height: 800)
         newWindow.maxSize = NSSize(width: 900, height: 1000)
@@ -343,7 +343,7 @@ extension AppDelegate {
             defer: false
         )
 
-        newWindow.title = "История переводов"
+        newWindow.title = String(localized: "История переводов")
         newWindow.isReleasedWhenClosed = false
         newWindow.minSize = NSSize(width: 560, height: 480)
 
@@ -367,8 +367,8 @@ extension AppDelegate {
         let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "—"
 
         let aboutPanel = NSAlert()
-        aboutPanel.messageText = "AI Переводчик"
-        aboutPanel.informativeText = """
+        aboutPanel.messageText = String(localized: "AI Переводчик")
+        aboutPanel.informativeText = String(localized: """
         Версия \(version) (\(build))
         
         Умный переводчик с поддержкой OpenWebUI API
@@ -391,7 +391,7 @@ extension AppDelegate {
         • Cmd+Q - выход
         
         Создано для удобного перевода текстов с помощью ИИ.
-        """
+        """)
         aboutPanel.alertStyle = .informational
         aboutPanel.addButton(withTitle: "OK")
         aboutPanel.runModal()

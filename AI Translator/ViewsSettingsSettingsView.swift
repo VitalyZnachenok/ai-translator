@@ -37,6 +37,9 @@ struct SettingsView: View {
     @State private var testResult = ""
     @State private var showAdvancedSettings = false
 
+    // Язык интерфейса
+    @State private var appLanguage: AppLanguage = LocalizationManager.current
+
     private enum HotkeyTarget {
         case quick
         case inPlace
@@ -152,6 +155,60 @@ struct SettingsView: View {
                 Label("Горячие клавиши", systemImage: "keyboard")
             }
             .tag(2)
+
+            // Вкладка 4: Основные
+            ScrollView {
+                VStack(spacing: 20) {
+                    generalSettings
+                    Spacer()
+                }
+                .padding()
+            }
+            .tabItem {
+                Label("Основные", systemImage: "gearshape")
+            }
+            .tag(3)
+        }
+    }
+
+    // MARK: - General Settings
+
+    private var generalSettings: some View {
+        GroupBox(label: Label("🌐 Язык интерфейса", systemImage: "globe")) {
+            VStack(alignment: .leading, spacing: 12) {
+                Picker("Язык интерфейса", selection: $appLanguage) {
+                    Text("Системный").tag(AppLanguage.system)
+                    Text("Русский").tag(AppLanguage.ru)
+                    Text("English").tag(AppLanguage.en)
+                }
+                .pickerStyle(.menu)
+                .frame(maxWidth: 320, alignment: .leading)
+                .onChange(of: appLanguage) { _, newValue in
+                    applyLanguageChange(newValue)
+                }
+
+                Text("Системный — использовать язык macOS (если он не поддерживается, интерфейс будет на английском). Изменение применяется после перезапуска.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding()
+        }
+    }
+
+    private func applyLanguageChange(_ language: AppLanguage) {
+        guard language != LocalizationManager.current else { return }
+        LocalizationManager.current = language
+        LocalizationManager.applyStartupLanguage()
+
+        let alert = NSAlert()
+        alert.messageText = String(localized: "Язык интерфейса изменён")
+        alert.informativeText = String(localized: "Чтобы применить новый язык, нужно перезапустить приложение.")
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: String(localized: "Перезапустить сейчас"))
+        alert.addButton(withTitle: String(localized: "Позже"))
+        if alert.runModal() == .alertFirstButtonReturn {
+            LocalizationManager.relaunchApp()
         }
     }
     

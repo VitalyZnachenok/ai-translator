@@ -163,10 +163,13 @@ final class SettingsManager {
     }
     
     func saveSettings() {
-        // Токены пишем в Keychain, а сами профили (без токенов) — в UserDefaults.
+        // Все токены пишем в Keychain ОДНИМ элементом (меньше запросов доступа),
+        // а сами профили (без токенов) — в UserDefaults.
+        var tokens: [String: String] = [:]
         for profile in connectionProfiles {
-            KeychainHelper.setToken(profile.apiToken, for: profile.id)
+            tokens[profile.id] = profile.apiToken
         }
+        KeychainHelper.setAllTokens(tokens)
 
         if let encodedProfiles = try? JSONEncoder().encode(connectionProfiles) {
             userDefaults.set(encodedProfiles, forKey: "connectionProfiles")
@@ -374,10 +377,14 @@ final class SettingsManager {
         guard !userDefaults.bool(forKey: "tokensMigratedToKeychain") else { return }
 
         if let legacy = try? JSONDecoder().decode([LegacyProfileToken].self, from: profilesData) {
+            var tokens: [String: String] = [:]
             for item in legacy {
                 if let token = item.apiToken, !token.isEmpty {
-                    KeychainHelper.setToken(token, for: item.id)
+                    tokens[item.id] = token
                 }
+            }
+            if !tokens.isEmpty {
+                KeychainHelper.setAllTokens(tokens)
             }
         }
 
@@ -389,9 +396,35 @@ final class SettingsManager {
     }
 
     /// Заполняет apiToken каждого профиля значением из Keychain.
+    /// Сначала пытается прочитать единый элемент (одно обращение → один запрос доступа).
+    /// Если его нет — мигрирует со старого формата (по одному элементу на профиль) и
+    /// удаляет старые элементы, чтобы дальше был только один запрос.
     private func loadTokensFromKeychain() {
+        let combined = KeychainHelper.allTokens()
+
+        if !combined.isEmpty {
+            for index in connectionProfiles.indices {
+                connectionProfiles[index].apiToken = combined[connectionProfiles[index].id] ?? ""
+            }
+            return
+        }
+
+        // Миграция со старого формата (по элементу на профиль).
+        var migrated: [String: String] = [:]
         for index in connectionProfiles.indices {
-            connectionProfiles[index].apiToken = KeychainHelper.token(for: connectionProfiles[index].id) ?? ""
+            let token = KeychainHelper.token(for: connectionProfiles[index].id) ?? ""
+            connectionProfiles[index].apiToken = token
+            if !token.isEmpty {
+                migrated[connectionProfiles[index].id] = token
+            }
+        }
+
+        if !migrated.isEmpty {
+            KeychainHelper.setAllTokens(migrated)
+            // Чистим старые отдельные элементы, чтобы они больше не запрашивали доступ.
+            for id in migrated.keys {
+                KeychainHelper.deleteToken(for: id)
+            }
         }
     }
     
