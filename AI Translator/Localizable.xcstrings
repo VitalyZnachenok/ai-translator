@@ -1873,6 +1873,72 @@
         }
       }
     },
+    "Мышление:" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Thinking:"
+          }
+        }
+      }
+    },
+    "Выключено" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Off"
+          }
+        }
+      }
+    },
+    "Низкое" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Low"
+          }
+        }
+      }
+    },
+    "Среднее" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Medium"
+          }
+        }
+      }
+    },
+    "Высокое" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "High"
+          }
+        }
+      }
+    },
+    "Для «думающих» моделей. «Выключено» отключает рассуждения (Ollama: reasoning_effort=none). «По умолчанию» — параметр не отправляется." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "For “thinking” models. “Off” disables reasoning (Ollama: reasoning_effort=none). “Default” omits the parameter."
+          }
+        }
+      }
+    },
     "Повторное нажатие %@ во время перевода отменяет операцию" : {
       "extractionState" : "manual",
       "localizations" : {

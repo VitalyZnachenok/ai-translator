@@ -19,6 +19,7 @@ struct ProfileEditView: View {
     @State private var temperature = 0.3
     @State private var maxTokens = 2048
     @State private var icon = "🌐"
+    @State private var reasoningEffort: ReasoningEffort = .serverDefault
     
     @State private var isTestingConnection = false
     @State private var testResult = ""
@@ -347,6 +348,26 @@ struct ProfileEditView: View {
                         set: { maxTokens = Int($0) }
                     ), in: 256...4096, step: 256)
                 }
+
+                Divider()
+
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text("Мышление:")
+                            .frame(width: 100, alignment: .leading)
+                        Picker("", selection: $reasoningEffort) {
+                            ForEach(ReasoningEffort.allCases) { effort in
+                                Text(effort.displayName).tag(effort)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                    }
+                    Text("Для «думающих» моделей. «Выключено» отключает рассуждения (Ollama: reasoning_effort=none). «По умолчанию» — параметр не отправляется.")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             .padding()
         }
@@ -409,6 +430,7 @@ struct ProfileEditView: View {
             temperature = profile.temperature
             maxTokens = profile.maxTokens
             icon = profile.icon
+            reasoningEffort = profile.reasoningEffort
             manualModelName = profile.modelName
         } else {
             name = "Новый профиль"
@@ -435,7 +457,8 @@ struct ProfileEditView: View {
             modelName: finalModelName,
             temperature: temperature,
             maxTokens: maxTokens,
-            icon: icon
+            icon: icon,
+            reasoningEffort: reasoningEffort
         )
         onSave(newProfile)
         dismiss()
@@ -527,7 +550,8 @@ struct ProfileEditView: View {
             apiToken: apiToken,
             modelName: finalModelName,
             temperature: temperature,
-            maxTokens: maxTokens
+            maxTokens: maxTokens,
+            reasoningEffort: reasoningEffort
         )
         
         tempSettings.connectionProfiles = [tempProfile]

@@ -57,6 +57,7 @@ actor TranslationService {
             modelName: settings.modelName,
             temperature: settings.temperature,
             maxTokens: settings.maxTokens,
+            reasoningEffort: settings.reasoningEffort,
             customPrompt: customPrompt
         )
         
@@ -92,12 +93,13 @@ actor TranslationService {
         modelName: String,
         temperature: Double,
         maxTokens: Int,
+        reasoningEffort: ReasoningEffort,
         customPrompt: TranslationPrompt?
     ) -> [String: Any] {
         let systemMessage = customPrompt?.systemPrompt ?? 
             "You are a professional translator. Translate accurately while preserving the tone and style of the original text."
         
-        return [
+        var body: [String: Any] = [
             "model": modelName,
             "messages": [
                 ["role": "system", "content": systemMessage],
@@ -107,6 +109,16 @@ actor TranslationService {
             "max_tokens": maxTokens,
             "stream": false
         ]
+
+        // Управление мышлением думающих моделей (Ollama OpenAI-совместимый API:
+        // "none" — выключить, "low"/"medium"/"high" — уровень). Если выбран
+        // вариант "по умолчанию" — параметр не отправляем, чтобы не сломать
+        // серверы, которые его не поддерживают.
+        if let effort = reasoningEffort.apiValue {
+            body["reasoning_effort"] = effort
+        }
+
+        return body
     }
     
     private func buildRequest(url: URL, body: [String: Any], token: String) throws -> URLRequest {
@@ -178,7 +190,25 @@ actor TranslationService {
             throw TranslationError.invalidResponse
         }
         
-        return content.trimmingCharacters(in: .whitespacesAndNewlines)
+        return stripReasoning(from: content).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Удаляет блоки рассуждений `<think>…</think>` (и аналоги), если модель
+    /// положила их прямо в content вместо отдельного поля reasoning.
+    private func stripReasoning(from text: String) -> String {
+        let patterns = [
+            "(?is)<think>.*?</think>",
+            "(?is)<thinking>.*?</thinking>"
+        ]
+        var result = text
+        for pattern in patterns {
+            result = result.replacingOccurrences(
+                of: pattern,
+                with: "",
+                options: .regularExpression
+            )
+        }
+        return result
     }
     
     private func convertError(_ error: Error) -> Error {

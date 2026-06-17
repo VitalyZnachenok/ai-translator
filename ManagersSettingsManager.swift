@@ -96,6 +96,15 @@ final class SettingsManager {
         }
     }
     
+    var reasoningEffort: ReasoningEffort {
+        get { activeProfile?.reasoningEffort ?? .serverDefault }
+        set {
+            guard var profile = activeProfile else { return }
+            profile.reasoningEffort = newValue
+            updateActiveProfile(profile)
+        }
+    }
+
     var isConfigured: Bool {
         activeProfile?.isConfigured ?? false
     }
