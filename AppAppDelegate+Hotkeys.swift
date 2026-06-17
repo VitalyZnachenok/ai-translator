@@ -122,20 +122,25 @@ extension AppDelegate {
         cachedInPlaceHotkey = parseHotkeyString(sharedSettingsManager.inPlaceTranslateHotkey)
     }
 
-    /// Если доступ ещё не выдан, периодически проверяет его и активирует хоткеи сразу после выдачи —
-    /// без необходимости перезапускать приложение.
+    /// Запускает периодические попытки активировать хоткеи, если они ещё не активны.
+    /// Покрывает два случая: (1) доступ к Accessibility ещё не выдан; (2) `AXIsProcessTrusted()`
+    /// возвращает true, но `CGEvent.tapCreate` не создаёт tap (типично после переустановки/переподписи,
+    /// когда разрешение «протухло»). В обоих случаях хоткеи активируются сразу после исправления —
+    /// без перезапуска приложения.
     func startAccessibilityMonitoringIfNeeded() {
-        guard !AXIsProcessTrusted() else { return }
+        guard eventTap == nil else { return }
+        startHotkeyRetryTimer()
+    }
+
+    private func startHotkeyRetryTimer() {
         guard accessibilityPollTimer == nil else { return }
 
-        Self.hotkeyLogger.info("Accessibility not granted — start monitoring")
-
-        let timer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
+        let timer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
             guard let self else { return }
-            guard AXIsProcessTrusted() else { return }
-
-            Self.hotkeyLogger.info("Accessibility granted — enabling global hotkey")
-            self.stopAccessibilityMonitoring()
+            if self.eventTap != nil {
+                self.stopAccessibilityMonitoring()
+                return
+            }
             self.setupGlobalHotkey()
         }
         timer.tolerance = 0.5
@@ -147,14 +152,17 @@ extension AppDelegate {
         accessibilityPollTimer = nil
     }
 
-    func setupGlobalHotkey() {
+    /// Создаёт глобальный event tap. Возвращает true, если tap успешно активирован.
+    @discardableResult
+    func setupGlobalHotkey() -> Bool {
         stopGlobalHotkey()
 
         refreshHotkeyCache()
 
         guard AXIsProcessTrusted() else {
             Self.hotkeyLogger.warning("Accessibility not granted")
-            return
+            startHotkeyRetryTimer()
+            return false
         }
         
         let eventMask = (1 << CGEventType.keyDown.rawValue)
@@ -193,16 +201,49 @@ extension AppDelegate {
             },
             userInfo: UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
         ) else {
-            Self.hotkeyLogger.error("Failed to create event tap")
-            return
+            // AXIsProcessTrusted() вернул true, но tap создать не удалось — характерный признак
+            // «протухшего» разрешения Accessibility (после обновления/переподписи приложения).
+            // Показываем подсказку один раз и продолжаем периодически пытаться — хоткеи поднимутся,
+            // как только пользователь переоткроет доступ.
+            Self.hotkeyLogger.error("Failed to create event tap despite trusted status (stale Accessibility grant?)")
+            notifyAccessibilityStaleIfNeeded()
+            startHotkeyRetryTimer()
+            return false
         }
         
         eventTap = tap
         runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
         CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
+        stopAccessibilityMonitoring()
         
         Self.hotkeyLogger.info("Global hotkey enabled")
+        return true
+    }
+
+    /// Подсказка пользователю, когда доступ формально есть, но tap не создаётся.
+    private func notifyAccessibilityStaleIfNeeded() {
+        guard !accessibilityAlertShown else { return }
+        accessibilityAlertShown = true
+
+        DispatchQueue.main.async {
+            let alert = NSAlert()
+            alert.messageText = String(localized: "Горячие клавиши недоступны")
+            alert.informativeText = String(localized: """
+            Системе не удалось активировать глобальные горячие клавиши, хотя доступ к универсальному доступу отмечен как выданный. Обычно это происходит после обновления приложения.
+
+            Откройте Системные настройки → Конфиденциальность и безопасность → Универсальный доступ, выключите и снова включите AI Translator (или удалите и добавьте заново). Хоткеи активируются автоматически.
+            """)
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: String(localized: "Открыть настройки"))
+            alert.addButton(withTitle: String(localized: "Позже"))
+
+            if alert.runModal() == .alertFirstButtonReturn {
+                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+                    NSWorkspace.shared.open(url)
+                }
+            }
+        }
     }
     
     func stopGlobalHotkey() {

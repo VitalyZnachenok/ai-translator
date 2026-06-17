@@ -1488,6 +1488,28 @@
         }
       }
     },
+    "Горячие клавиши недоступны" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hotkeys unavailable"
+          }
+        }
+      }
+    },
+    "Системе не удалось активировать глобальные горячие клавиши, хотя доступ к универсальному доступу отмечен как выданный. Обычно это происходит после обновления приложения.\n\nОткройте Системные настройки → Конфиденциальность и безопасность → Универсальный доступ, выключите и снова включите AI Translator (или удалите и добавьте заново). Хоткеи активируются автоматически." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The system could not enable global hotkeys even though Accessibility access is marked as granted. This usually happens after an app update.\n\nOpen System Settings → Privacy & Security → Accessibility, then toggle AI Translator off and on (or remove and re-add it). The hotkeys will activate automatically."
+          }
+        }
+      }
+    },
     "Открыть настройки" : {
       "extractionState" : "manual",
       "localizations" : {

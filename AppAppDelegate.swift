@@ -28,8 +28,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var eventTap: CFMachPort?
     var runLoopSource: CFRunLoopSource?
 
-    /// Таймер, отслеживающий выдачу Accessibility-доступа, чтобы активировать хоткеи без перезапуска.
+    /// Таймер, отслеживающий выдачу Accessibility-доступа / повторные попытки создать event tap,
+    /// чтобы активировать хоткеи без перезапуска.
     var accessibilityPollTimer: Timer?
+    /// Чтобы подсказка о «протухшем» разрешении показывалась не чаще одного раза за запуск.
+    var accessibilityAlertShown = false
 
     /// Текущая выполняющаяся задача in-place перевода (нужна для отмены повторным нажатием).
     var inPlaceTask: Task<Void, Never>?
