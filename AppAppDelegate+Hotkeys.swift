@@ -212,13 +212,61 @@ extension AppDelegate {
         }
         
         eventTap = tap
-        runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-        CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
+        guard let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0) else {
+            Self.hotkeyLogger.error("Failed to create run loop source for event tap")
+            stopGlobalHotkey()
+            startHotkeyRetryTimer()
+            return false
+        }
+        runLoopSource = source
+        // Источник вешаем на выделенный поток, а НЕ на главный: иначе занятость главного потока
+        // подвешивает доставку всех нажатий в системе (см. комментарий к tapThread).
+        installSourceOnTapThread(source)
         CGEvent.tapEnable(tap: tap, enable: true)
         stopAccessibilityMonitoring()
         
         Self.hotkeyLogger.info("Global hotkey enabled")
         return true
+    }
+
+    /// Создаёт (при необходимости) выделенный поток с собственным run loop и вешает на него
+    /// источник event tap. Поток живёт всё время работы приложения и переживает пересоздания tap.
+    private func installSourceOnTapThread(_ source: CFRunLoopSource) {
+        if let runLoop = tapRunLoop {
+            CFRunLoopAddSource(runLoop, source, .commonModes)
+            CFRunLoopWakeUp(runLoop)
+            return
+        }
+
+        let ready = DispatchSemaphore(value: 0)
+        let thread = Thread { [weak self] in
+            let runLoop = CFRunLoopGetCurrent()
+            self?.tapRunLoop = runLoop
+            CFRunLoopAddSource(runLoop, source, .commonModes)
+            ready.signal()
+            // Держим run loop живым даже когда источник временно снят (при пересоздании tap).
+            // Таймаут лишь ограничивает частоту проверки isCancelled; на приход события
+            // run loop просыпается немедленно, так что задержки обработки клавиш нет.
+            while !Thread.current.isCancelled {
+                CFRunLoopRunInMode(.defaultMode, 0.5, false)
+            }
+        }
+        thread.name = "com.vitaly.ai-translator.eventtap"
+        thread.qualityOfService = .userInteractive
+        tapThread = thread
+        thread.start()
+        // Дожидаемся, пока поток зафиксирует свой run loop и повесит источник.
+        ready.wait()
+    }
+
+    /// Останавливает выделенный поток event tap (при выходе из приложения).
+    func teardownTapThread() {
+        tapThread?.cancel()
+        if let runLoop = tapRunLoop {
+            CFRunLoopWakeUp(runLoop)
+        }
+        tapThread = nil
+        tapRunLoop = nil
     }
 
     /// Подсказка пользователю, когда доступ формально есть, но tap не создаётся.
@@ -249,8 +297,9 @@ extension AppDelegate {
     func stopGlobalHotkey() {
         if let tap = eventTap {
             CGEvent.tapEnable(tap: tap, enable: false)
-            if let source = runLoopSource {
-                CFRunLoopRemoveSource(CFRunLoopGetCurrent(), source, .commonModes)
+            if let source = runLoopSource, let runLoop = tapRunLoop {
+                CFRunLoopRemoveSource(runLoop, source, .commonModes)
+                CFRunLoopWakeUp(runLoop)
             }
             eventTap = nil
             runLoopSource = nil

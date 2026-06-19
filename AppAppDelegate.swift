@@ -28,6 +28,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var eventTap: CFMachPort?
     var runLoopSource: CFRunLoopSource?
 
+    /// Выделенный поток с собственным run loop для обработки event tap.
+    /// Критично: колбэк сессионного tap синхронно тормозит доставку КАЖДОГО нажатия
+    /// всем приложениям, пока не вернётся. Если держать его на главном потоке,
+    /// любая блокировка (модальный алерт, тяжёлый UI, сетевой запрос) подвешивает
+    /// глобальный ввод — вплоть до полного зависания клавиатуры. Отдельный поток
+    /// гарантирует мгновенный возврат колбэка независимо от состояния главного потока.
+    var tapThread: Thread?
+    var tapRunLoop: CFRunLoop?
+
     /// Таймер, отслеживающий выдачу Accessibility-доступа / повторные попытки создать event tap,
     /// чтобы активировать хоткеи без перезапуска.
     var accessibilityPollTimer: Timer?
@@ -55,6 +64,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     deinit {
         removeEventMonitors()
         stopGlobalHotkey()
+        teardownTapThread()
         accessibilityPollTimer?.invalidate()
     }
     
@@ -72,6 +82,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         logger.info("Application terminating")
         removeEventMonitors()
+        stopGlobalHotkey()
+        teardownTapThread()
         stopAccessibilityMonitoring()
         settingsWindow = nil
         mainWindow = nil
