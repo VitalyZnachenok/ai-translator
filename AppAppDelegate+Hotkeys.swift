@@ -122,26 +122,29 @@ extension AppDelegate {
         cachedInPlaceHotkey = parseHotkeyString(sharedSettingsManager.inPlaceTranslateHotkey)
     }
 
-    /// Запускает периодические попытки активировать хоткеи, если они ещё не активны.
-    /// Покрывает два случая: (1) доступ к Accessibility ещё не выдан; (2) `AXIsProcessTrusted()`
-    /// возвращает true, но `CGEvent.tapCreate` не создаёт tap (типично после переустановки/переподписи,
-    /// когда разрешение «протухло»). В обоих случаях хоткеи активируются сразу после исправления —
-    /// без перезапуска приложения.
+    /// Запускает watchdog-таймер, если tap ещё не создан (Accessibility не выдан или разрешение «протухло»).
+    /// Когда tap успешно создаётся в `setupGlobalHotkey`, таймер запускается там же напрямую,
+    /// поэтому здесь guard нужен только чтобы не создавать лишний таймер при двойном вызове.
     func startAccessibilityMonitoringIfNeeded() {
         guard eventTap == nil else { return }
         startHotkeyRetryTimer()
     }
 
+    /// Watchdog-таймер двойного назначения:
+    /// - Пока tap не создан: пытается вызвать `setupGlobalHotkey` каждые 2 с (ждёт Accessibility).
+    /// - После создания tap: периодически вызывает `CGEvent.tapEnable(enable: true)` как heartbeat,
+    ///   чтобы гарантированно поднять tap, если система тихо отключила его через
+    ///   `tapDisabledByTimeout` или `tapDisabledByUserInput` (второй срабатывает при смене раскладки).
     private func startHotkeyRetryTimer() {
         guard accessibilityPollTimer == nil else { return }
 
         let timer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
             guard let self else { return }
-            if self.eventTap != nil {
-                self.stopAccessibilityMonitoring()
-                return
+            if let tap = self.eventTap {
+                CGEvent.tapEnable(tap: tap, enable: true)
+            } else {
+                self.setupGlobalHotkey()
             }
-            self.setupGlobalHotkey()
         }
         timer.tolerance = 0.5
         accessibilityPollTimer = timer
@@ -223,8 +226,10 @@ extension AppDelegate {
         // подвешивает доставку всех нажатий в системе (см. комментарий к tapThread).
         installSourceOnTapThread(source)
         CGEvent.tapEnable(tap: tap, enable: true)
-        stopAccessibilityMonitoring()
-        
+        // Запускаем (или продолжаем) watchdog — он периодически переактивирует tap
+        // на случай тихого отключения системой (tapDisabledByTimeout/UserInput).
+        startHotkeyRetryTimer()
+
         Self.hotkeyLogger.info("Global hotkey enabled")
         return true
     }
