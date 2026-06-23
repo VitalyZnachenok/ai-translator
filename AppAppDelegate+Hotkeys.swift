@@ -132,9 +132,9 @@ extension AppDelegate {
 
     /// Watchdog-таймер двойного назначения:
     /// - Пока tap не создан: пытается вызвать `setupGlobalHotkey` каждые 2 с (ждёт Accessibility).
-    /// - После создания tap: периодически вызывает `CGEvent.tapEnable(enable: true)` как heartbeat,
-    ///   чтобы гарантированно поднять tap, если система тихо отключила его через
-    ///   `tapDisabledByTimeout` или `tapDisabledByUserInput` (второй срабатывает при смене раскладки).
+    /// - После создания tap: heartbeat `CGEvent.tapEnable` + детектор Secure Input Mode.
+    ///   Если keyboard-событий нет 3 минуты — вероятен Secure Input Mode (1Password и т.д.),
+    ///   меняем иконку menu bar и показываем предупреждение в контекстном меню.
     private func startHotkeyRetryTimer() {
         guard accessibilityPollTimer == nil else { return }
 
@@ -142,12 +142,68 @@ extension AppDelegate {
             guard let self else { return }
             if let tap = self.eventTap {
                 CGEvent.tapEnable(tap: tap, enable: true)
+                self.checkSecureInputSuspicion()
             } else {
                 self.setupGlobalHotkey()
             }
         }
         timer.tolerance = 0.5
         accessibilityPollTimer = timer
+    }
+
+    /// Проверяет, не заблокирован ли event tap Secure Input Mode.
+    /// Если с момента последнего клавиатурного события прошло более 3 минут —
+    /// подозреваем Secure Input (1Password, менеджер паролей или браузер держат его активным).
+    private func checkSecureInputSuspicion() {
+        let ts = lastTapKeyTimestamp
+        guard ts > 0 else { return }  // ни одного события ещё не было — слишком рано
+
+        let elapsed = Date().timeIntervalSince1970 - ts
+        let suspected = elapsed > 180  // 3 минуты
+
+        guard suspected != secureInputSuspected else { return }
+        secureInputSuspected = suspected
+
+        if suspected {
+            Self.hotkeyLogger.warning("Secure Input Mode suspected — no keyboard events for 3+ minutes")
+            updateMenuBarForSecureInput(active: true)
+        } else {
+            Self.hotkeyLogger.info("Keyboard events resumed — Secure Input Mode cleared")
+            updateMenuBarForSecureInput(active: false)
+        }
+    }
+
+    func updateMenuBarForSecureInput(active: Bool) {
+        guard let button = statusBarItem?.button else { return }
+        if active {
+            let config = NSImage.SymbolConfiguration(pointSize: 14, weight: .medium)
+            if let image = NSImage(systemSymbolName: "lock.slash", accessibilityDescription: nil)?
+                .withSymbolConfiguration(config) {
+                image.isTemplate = true
+                button.image = image
+            }
+        } else {
+            // Восстанавливаем иконку только если нет активного статуса перевода.
+            if inPlaceTask == nil {
+                button.image = defaultStatusBarImage
+            }
+        }
+    }
+
+    @objc func showSecureInputHelp() {
+        let alert = NSAlert()
+        alert.messageText = String(localized: "Горячие клавиши заблокированы")
+        alert.informativeText = String(localized: """
+        Активен Secure Input Mode — macOS блокирует горячие клавиши, пока 1Password, другой менеджер паролей или браузер удерживает защищённый ввод.
+
+        Что сделать:
+        • 1Password → Настройки → Безопасность → выключите «Secure Keyboard Entry»
+        • Или полностью выйдите из 1Password (Cmd+Q)
+        • Firefox/Chrome: закройте вкладки с формами авторизации, либо перезапустите браузер
+        """)
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
     }
 
     func stopAccessibilityMonitoring() {
@@ -186,6 +242,13 @@ extension AppDelegate {
                         CGEvent.tapEnable(tap: tap, enable: true)
                     }
                     return Unmanaged.passRetained(event)
+                }
+
+                // Фиксируем время любого входящего события — для детектора Secure Input Mode.
+                // Dispatch неблокирующий; Double на main thread потокобезопасен для одиночной записи.
+                let now = Date().timeIntervalSince1970
+                DispatchQueue.main.async { [weak appDelegate] in
+                    appDelegate?.lastTapKeyTimestamp = now
                 }
 
                 if let matched = appDelegate.matchedHotkey(event: event) {
@@ -634,7 +697,12 @@ extension AppDelegate {
         let symbol: String
         switch status {
         case .idle:
-            button.image = defaultStatusBarImage
+            // Если Secure Input Mode активен — показываем lock-иконку вместо обычной.
+            if secureInputSuspected {
+                updateMenuBarForSecureInput(active: true)
+            } else {
+                button.image = defaultStatusBarImage
+            }
             return
         case .busy:
             symbol = "arrow.triangle.2.circlepath"

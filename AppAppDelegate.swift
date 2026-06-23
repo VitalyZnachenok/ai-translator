@@ -53,6 +53,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var cachedQuickHotkey: (keyCode: Int64, modifiers: CGEventFlags) = (0x11, .maskCommand)
     var cachedInPlaceHotkey: (keyCode: Int64, modifiers: CGEventFlags) = (0x11, [.maskCommand, .maskShift])
 
+    /// Unix-время последнего keyboard-события, полученного event tap (пишется с tapThread через main dispatch).
+    /// Используется watchdog-таймером для детектирования Secure Input Mode.
+    var lastTapKeyTimestamp: Double = 0
+    /// true когда tap не получает клавиатурных событий 3+ минут — вероятен Secure Input Mode.
+    var secureInputSuspected = false
+
     private let logger = Logger(subsystem: "com.vitaly.ai-translator", category: "AppDelegate")
     
     var isLaunchAtLoginEnabled: Bool {
@@ -171,7 +177,18 @@ extension AppDelegate {
     
     private func showContextMenu() {
         let menu = NSMenu()
-        
+
+        if secureInputSuspected {
+            let warnItem = NSMenuItem(
+                title: String(localized: "⚠️ Горячие клавиши заблокированы"),
+                action: #selector(showSecureInputHelp),
+                keyEquivalent: ""
+            )
+            warnItem.target = self
+            menu.addItem(warnItem)
+            menu.addItem(NSMenuItem.separator())
+        }
+
         menu.addItem(NSMenuItem(title: String(localized: "🌐 Открыть переводчик"), action: #selector(showMainWindow), keyEquivalent: "o"))
         menu.addItem(NSMenuItem.separator())
         
