@@ -25,20 +25,8 @@ struct CompactContentView: View {
         }
         .padding(.vertical, 8)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onAppear {
-            viewModel.configure(with: settingsManager)
-            viewModel.setupKeyboardShortcuts()
-            viewModel.setupQuickTranslateListener()
-        }
-        .onDisappear {
-            viewModel.removeKeyboardShortcuts()
-            viewModel.removeQuickTranslateListener()
-        }
-        .alert("Ошибка", isPresented: $viewModel.showingError) {
-            Button("OK") { }
-        } message: {
-            Text(viewModel.errorMessage)
-        }
+        .translationLifecycle(viewModel: viewModel, settingsManager: settingsManager)
+        .translationErrorAlert(viewModel)
     }
     
     // MARK: - Header Section
@@ -69,30 +57,16 @@ struct CompactContentView: View {
         .padding(.horizontal)
     }
     
-    @ViewBuilder
     private var profileMenu: some View {
-        if !viewModel.connectionProfiles.isEmpty {
-            Menu {
-                ForEach(viewModel.connectionProfiles) { profile in
-                    Button(action: {
-                        viewModel.setActiveProfile(profile.id)
-                    }) {
-                        HStack {
-                            Text(profile.displayName)
-                            if viewModel.activeProfileId == profile.id {
-                                Image(systemName: "checkmark")
-                            }
-                        }
-                    }
-                }
-            } label: {
-                if let activeProfile = viewModel.activeProfile {
-                    Text(activeProfile.icon)
-                        .font(.caption2)
-                }
+        ProfilePickerMenu(
+            profiles: viewModel.connectionProfiles,
+            activeProfileId: viewModel.activeProfileId,
+            onSelect: { viewModel.setActiveProfile($0) }
+        ) {
+            if let activeProfile = viewModel.activeProfile {
+                Text(activeProfile.icon)
+                    .font(.caption2)
             }
-            .menuStyle(.borderlessButton)
-            .help("Переключить профиль")
         }
     }
     
@@ -172,9 +146,7 @@ struct CompactContentView: View {
                     }
                     .buttonStyle(PlainButtonStyle())
                 }
-                Text("\(viewModel.inputText.count)/5000")
-                    .font(.caption2)
-                    .foregroundColor(viewModel.inputText.count > 4500 ? .red : .secondary)
+                InputCharacterCountLabel(count: viewModel.inputText.count, limit: 5000, font: .caption2)
             }
             
             TextEditor(text: $viewModel.inputText)

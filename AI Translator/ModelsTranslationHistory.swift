@@ -20,6 +20,7 @@ struct TranslationHistoryEntry: Identifiable, Codable, Equatable {
 }
 
 @Observable
+@MainActor
 final class TranslationHistoryStore {
     static let shared = TranslationHistoryStore()
 

@@ -51,73 +51,24 @@ final class SettingsManager {
     
     // MARK: - Computed Properties
     
-    var apiUrl: String {
-        get { activeProfile?.apiUrl ?? "" }
-        set {
-            guard var profile = activeProfile else { return }
-            profile.apiUrl = newValue
-            updateActiveProfile(profile)
-        }
-    }
-    
-    var apiToken: String {
-        get { activeProfile?.apiToken ?? "" }
-        set {
-            guard var profile = activeProfile else { return }
-            profile.apiToken = newValue
-            updateActiveProfile(profile)
-        }
-    }
-    
-    var modelName: String {
-        get { activeProfile?.modelName ?? "" }
-        set {
-            guard var profile = activeProfile else { return }
-            profile.modelName = newValue
-            updateActiveProfile(profile)
-        }
-    }
-    
-    var temperature: Double {
-        get { activeProfile?.temperature ?? 0.3 }
-        set {
-            guard var profile = activeProfile else { return }
-            profile.temperature = newValue
-            updateActiveProfile(profile)
-        }
-    }
-    
-    var maxTokens: Int {
-        get { activeProfile?.maxTokens ?? 2048 }
-        set {
-            guard var profile = activeProfile else { return }
-            profile.maxTokens = newValue
-            updateActiveProfile(profile)
-        }
-    }
-    
-    var reasoningEffort: ReasoningEffort {
-        get { activeProfile?.reasoningEffort ?? .serverDefault }
-        set {
-            guard var profile = activeProfile else { return }
-            profile.reasoningEffort = newValue
-            updateActiveProfile(profile)
-        }
-    }
+    // Только для чтения: изменения профиля идут через updateProfile(_:), который
+    // и мутирует connectionProfiles, и персистит их — отдельные сеттеры здесь были
+    // мёртвым кодом (нигде не вызывались) и вдобавок не сохраняли изменения.
+    var apiUrl: String { activeProfile?.apiUrl ?? "" }
+    var apiToken: String { activeProfile?.apiToken ?? "" }
+    var modelName: String { activeProfile?.modelName ?? "" }
+    var temperature: Double { activeProfile?.temperature ?? 0.3 }
+    var maxTokens: Int { activeProfile?.maxTokens ?? 2048 }
+    var reasoningEffort: ReasoningEffort { activeProfile?.reasoningEffort ?? .serverDefault }
 
     var isConfigured: Bool {
         activeProfile?.isConfigured ?? false
     }
-    
+
     var activeProfile: ConnectionProfile? {
-        get { connectionProfiles.first { $0.id == activeProfileId } }
-        set {
-            if let newProfile = newValue {
-                updateActiveProfile(newProfile)
-            }
-        }
+        connectionProfiles.first { $0.id == activeProfileId }
     }
-    
+
     // MARK: - Private Properties
     
     private let userDefaults = UserDefaults.standard

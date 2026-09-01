@@ -89,7 +89,10 @@ actor ModelService {
     
     private func handleHTTPError(statusCode: Int, data: Data) throws {
         let responseString = String(data: data, encoding: .utf8) ?? "No response body"
-        logger.error("HTTP error \(statusCode): \(responseString)")
+        // Тело ответа может быть большим и в редких случаях содержать чувствительные
+        // детали (эхо заголовков и т.п.) — обрезаем и помечаем как private, чтобы оно
+        // не осело в системных логах открытым текстом.
+        logger.error("HTTP error \(statusCode): \(responseString.prefix(300), privacy: .private)")
         
         if let errorData = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
             if let detail = errorData["detail"] as? String {

@@ -43,7 +43,7 @@ actor TranslationService {
         guard let settings = settingsManager, settings.isConfigured else {
             throw TranslationError.notConfigured
         }
-        
+
         let prompt = createTranslationPrompt(
             text: text,
             from: sourceLanguage,
@@ -75,9 +75,7 @@ actor TranslationService {
             urlString += "/"
         }
         
-        if !urlString.hasSuffix("chat/completions") && !urlString.hasSuffix("v1/") {
-            urlString += "chat/completions"
-        } else if urlString.hasSuffix("v1/") {
+        if !urlString.hasSuffix("chat/completions") {
             urlString += "chat/completions"
         }
         
@@ -155,13 +153,19 @@ actor TranslationService {
                 return try parseTranslationResponse(data: data)
                 
             } catch {
+                if error is CancellationError
+                    || (error as? URLError)?.code == .cancelled
+                    || Task.isCancelled {
+                    throw error
+                }
+
                 lastError = error
                 logger.warning("Translation attempt \(attempt) failed: \(error.localizedDescription)")
-                
+
                 if !(error is URLError) || attempt == maxRetries {
                     throw convertError(error)
                 }
-                
+
                 try await Task.sleep(for: .seconds(attempt))
             }
         }

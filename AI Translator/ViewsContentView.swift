@@ -29,20 +29,8 @@ struct ContentView: View {
         .sheet(isPresented: $showingSettings) {
             SettingsView(settingsManager: settingsManager)
         }
-        .alert("Ошибка", isPresented: $viewModel.showingError) {
-            Button("OK") { }
-        } message: {
-            Text(viewModel.errorMessage)
-        }
-        .onAppear {
-            viewModel.configure(with: settingsManager)
-            viewModel.setupKeyboardShortcuts()
-            viewModel.setupQuickTranslateListener()
-        }
-        .onDisappear {
-            viewModel.removeKeyboardShortcuts()
-            viewModel.removeQuickTranslateListener()
-        }
+        .translationErrorAlert(viewModel)
+        .translationLifecycle(viewModel: viewModel, settingsManager: settingsManager)
     }
     
     // MARK: - Header Section
@@ -74,39 +62,25 @@ struct ContentView: View {
         .padding(.horizontal)
     }
     
-    @ViewBuilder
     private var profileSelector: some View {
-        if !viewModel.connectionProfiles.isEmpty {
-            Menu {
-                ForEach(viewModel.connectionProfiles) { profile in
-                    Button(action: {
-                        viewModel.setActiveProfile(profile.id)
-                    }) {
-                        HStack {
-                            Text(profile.displayName)
-                            if viewModel.activeProfileId == profile.id {
-                                Image(systemName: "checkmark")
-                            }
-                        }
-                    }
-                }
-            } label: {
-                HStack(spacing: 4) {
-                    if let activeProfile = viewModel.activeProfile {
-                        Text(activeProfile.icon)
-                            .font(.caption)
-                        Text(activeProfile.name)
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
-                    }
-                    Image(systemName: "chevron.down")
+        ProfilePickerMenu(
+            profiles: viewModel.connectionProfiles,
+            activeProfileId: viewModel.activeProfileId,
+            onSelect: { viewModel.setActiveProfile($0) }
+        ) {
+            HStack(spacing: 4) {
+                if let activeProfile = viewModel.activeProfile {
+                    Text(activeProfile.icon)
+                        .font(.caption)
+                    Text(activeProfile.name)
                         .font(.caption2)
                         .foregroundColor(.secondary)
+                        .lineLimit(1)
                 }
+                Image(systemName: "chevron.down")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
             }
-            .menuStyle(.borderlessButton)
-            .help("Переключить профиль подключения")
         }
     }
     
@@ -217,9 +191,7 @@ struct ContentView: View {
                     .help("Очистить текст")
                 }
                 
-                Text("\(viewModel.inputText.count)/5000")
-                    .font(.caption)
-                    .foregroundColor(viewModel.inputText.count > 4500 ? .red : .secondary)
+                InputCharacterCountLabel(count: viewModel.inputText.count, limit: 5000)
             }
             
             TextEditor(text: $viewModel.inputText)

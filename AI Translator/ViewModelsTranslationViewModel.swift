@@ -29,9 +29,13 @@ final class TranslationViewModel {
     
     private let translationService = TranslationService()
     private var settingsManager: SettingsManager?
-    private var keyEventMonitor: Any?
-    private var notificationObserver: Any?
-    private var copyFeedbackTask: Task<Void, Never>?
+    // nonisolated(unsafe): только эти три поля нужно читать из deinit, который
+    // не изолирован к MainActor и не может ждать async-переход. Безопасно, так как
+    // они мутируются исключительно на MainActor, пока экземпляр жив, а deinit
+    // выполняется только когда других ссылок (и, значит, конкурентного доступа) уже нет.
+    private nonisolated(unsafe) var keyEventMonitor: Any?
+    private nonisolated(unsafe) var notificationObserver: Any?
+    private nonisolated(unsafe) var copyFeedbackTask: Task<Void, Never>?
     private let logger = Logger(subsystem: "com.vitaly.ai-translator", category: "TranslationViewModel")
     
     // MARK: - Computed Properties
@@ -63,28 +67,53 @@ final class TranslationViewModel {
     var currentPrompt: TranslationPrompt? {
         customPrompts.first { $0.id == selectedPromptId }
     }
-    
+
+    /// Кэш последнего разобранного Markdown — SwiftUI может обращаться к `formattedOutput`
+    /// на каждой перерисовке (например, при анимации copyFeedback), даже когда outputText
+    /// не менялся; без кэша это означало бы повторный парсинг Markdown при каждом обращении.
+    @ObservationIgnored
+    private var cachedFormattedOutput: (source: String, value: AttributedString)?
+
     var formattedOutput: AttributedString {
-        guard !outputText.isEmpty else {
+        if let cached = cachedFormattedOutput, cached.source == outputText {
+            return cached.value
+        }
+        let value = Self.parseFormattedOutput(outputText)
+        cachedFormattedOutput = (outputText, value)
+        return value
+    }
+
+    private static func parseFormattedOutput(_ text: String) -> AttributedString {
+        guard !text.isEmpty else {
             var placeholder = AttributedString("Результат перевода появится здесь...")
             placeholder.foregroundColor = .secondary
             return placeholder
         }
         if let md = try? AttributedString(
-            markdown: outputText,
+            markdown: text,
             options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
         ) {
             return md
         }
-        return AttributedString(outputText)
+        return AttributedString(text)
     }
     
     // MARK: - Initialization
     
     init() {}
-    
+
     deinit {
-        cleanup()
+        // Прямой доступ к хранимым свойствам без прыжка на MainActor: deinit не может
+        // быть async, а системные API удаления монитора/наблюдателя потокобезопасны
+        // и не требуют изоляции. Раньше здесь планировался Task { @MainActor [weak self] },
+        // который никогда не выполнял очистку — self уже деинициализирован к моменту запуска.
+        if let monitor = keyEventMonitor {
+            NSEvent.removeMonitor(monitor)
+        }
+        if let observer = notificationObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        copyFeedbackTask?.cancel()
     }
     
     // MARK: - Configuration
@@ -336,12 +365,4 @@ final class TranslationViewModel {
         }
     }
     
-    private nonisolated func cleanup() {
-        // Выполняем cleanup на main actor
-        Task { @MainActor [weak self] in
-            self?.removeKeyboardShortcuts()
-            self?.removeQuickTranslateListener()
-            self?.copyFeedbackTask?.cancel()
-        }
-    }
 }

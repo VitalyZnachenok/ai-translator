@@ -61,6 +61,26 @@ pair, the regular `source/target` settings are used.
 In‑place translation requires **Accessibility** permission — the app asks for
 it on first launch.
 
+## Troubleshooting
+
+**Hotkeys stop working after rebuilding/reinstalling the app, even though
+Accessibility shows as granted** ("Система не удалось активировать глобальные
+горячие клавиши…" / the app's own "stale permission" alert). This happens
+because each local rebuild re‑signs the app, and macOS sometimes keeps a
+stale TCC record tied to the old signature — removing and re‑adding the app
+in System Settings doesn't always clear it. Two things to check:
+
+1. **Privacy & Security → Input Monitoring** (a *separate* list from
+   Accessibility) — the app needs to be listed and enabled there too, since
+   listening to key events via `CGEventTapCreate` requires it independently
+   of Accessibility.
+2. If that doesn't help, reset the cached TCC state from Terminal and
+   relaunch the app (it will re‑prompt for both permissions):
+   ```
+   tccutil reset Accessibility com.vitaly.ai-translator.AI-Translator
+   tccutil reset ListenEvent com.vitaly.ai-translator.AI-Translator
+   ```
+
 ## Requirements
 
 macOS 14 (Sonoma) or newer (uses the Observation framework).
@@ -143,6 +163,27 @@ Anthropic‑совместимые шлюзы и т.п.).
 
 Для работы требуется разрешение **Универсального доступа** (Accessibility) —
 приложение запросит его при первом запуске.
+
+## Решение проблем
+
+**Горячие клавиши перестают работать после пересборки/переустановки
+приложения, хотя доступ к Универсальному доступу отмечен как выданный**
+(сообщение «Системе не удалось активировать глобальные горячие клавиши…»).
+Причина — при каждой локальной пересборке приложение переподписывается, и
+macOS иногда сохраняет устаревшую TCC-запись, привязанную к старой подписи;
+удаление и повторное добавление приложения в Системных настройках не всегда
+её сбрасывает. Что проверить:
+
+1. **Конфиденциальность и безопасность → Мониторинг ввода (Input
+   Monitoring)** — отдельный от Универсального доступа список. Приложение
+   должно быть в нём и включено: прослушивание клавиш через
+   `CGEventTapCreate` требует этого разрешения независимо от Accessibility.
+2. Если не помогло — сбросить закэшированное состояние TCC из терминала и
+   перезапустить приложение (оно заново запросит оба разрешения):
+   ```
+   tccutil reset Accessibility com.vitaly.ai-translator.AI-Translator
+   tccutil reset ListenEvent com.vitaly.ai-translator.AI-Translator
+   ```
 
 ## Требования
 
