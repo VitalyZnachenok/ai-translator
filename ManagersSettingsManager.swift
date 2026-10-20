@@ -262,16 +262,21 @@ final class SettingsManager {
         let prompt = customPrompts.first { $0.id == basePromptId }
 
         // Auto-swap имеет приоритет: если язык определился и попал в активную пару — берём её направление.
+        // Детектору подсказываем языки пар, иначе короткое «Привет» уходит как болгарский.
         if inPlaceAutoSwap,
-           let text = selectedText,
-           let detected = LanguageDetector.detect(text) {
-            for pair in inPlaceLanguagePairs where pair.enabled {
-                if let target = pair.target(for: detected) {
-                    return (detected, target, prompt, .autoSwap(detected: detected))
+           let text = selectedText {
+            let pairLanguages = inPlaceLanguagePairs.filter(\.enabled).flatMap { [$0.primary, $0.secondary] }
+            if let detected = LanguageDetector.detect(text, preferring: pairLanguages) {
+                for pair in inPlaceLanguagePairs where pair.enabled {
+                    if let target = pair.target(for: detected) {
+                        return (detected, target, prompt, .autoSwap(detected: detected))
+                    }
                 }
             }
         }
 
+        // Остальное (определение «auto» и защита «цель совпала с исходным языком»)
+        // делает TranslationService через TranslationDirectionResolver для всех режимов.
         return (baseSource, baseTarget, prompt, baseDirection)
     }
     
@@ -299,7 +304,7 @@ final class SettingsManager {
                 name: "Claude (Anthropic)",
                 apiUrl: "https://api.anthropic.com/v1",
                 apiToken: "",
-                modelName: "claude-3-haiku-20240307",
+                modelName: "claude-haiku-5-5",
                 temperature: 0.3,
                 maxTokens: 2048,
                 icon: "🧠"

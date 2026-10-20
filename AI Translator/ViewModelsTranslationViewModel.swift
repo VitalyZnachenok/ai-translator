@@ -24,7 +24,11 @@ final class TranslationViewModel {
     var errorMessage = ""
     var showingError = false
     var copyFeedback = false
-    
+    /// Фактическое направление последнего перевода (после определения языка и защиты от совпадения).
+    var resolvedDirection: ResolvedDirection?
+    @ObservationIgnored
+    private var translationTask: Task<Void, Never>?
+
     // MARK: - Private Properties
     
     private let translationService = TranslationService()
@@ -169,26 +173,50 @@ final class TranslationViewModel {
             customPrompt = createExplanationPrompt(basePrompt: customPrompt)
         }
         
-        Task {
+        resolvedDirection = nil
+        let sourceText = inputText
+        let source = selectedSourceLanguage
+        let target = selectedTargetLanguage
+
+        translationTask?.cancel()
+        translationTask = Task {
             do {
                 logger.debug("Starting translation (withExplanation: \(withExplanation))...")
-                let result = try await translationService.translate(
-                    text: inputText,
-                    from: selectedSourceLanguage,
-                    to: selectedTargetLanguage,
-                    customPrompt: customPrompt
+                // Потоковый режим: текст появляется по мере генерации. Для перевода с
+                // пояснениями проверку языка ответа отключаем — ответ смешанный по замыслу.
+                let stream = await translationService.translateStream(
+                    text: sourceText,
+                    from: source,
+                    to: target,
+                    customPrompt: customPrompt,
+                    verifyOutputLanguage: !withExplanation
                 )
-                
-                outputText = result
+
+                var completed: TranslationResult?
+                for try await event in stream {
+                    switch event {
+                    case .direction(let direction):
+                        resolvedDirection = direction
+                    case .text(let partial):
+                        outputText = partial
+                    case .completed(let result):
+                        completed = result
+                        outputText = result.text
+                    }
+                }
+                guard let result = completed else { throw TranslationError.invalidResponse }
+
                 isTranslating = false
                 TranslationHistoryStore.shared.add(
-                    sourceText: inputText,
-                    translatedText: result,
-                    sourceLanguage: selectedSourceLanguage,
-                    targetLanguage: selectedTargetLanguage,
+                    sourceText: sourceText,
+                    translatedText: result.text,
+                    sourceLanguage: result.sourceLanguage,
+                    targetLanguage: result.targetLanguage,
                     origin: withExplanation ? "Окно (с пояснениями)" : "Окно переводчика"
                 )
-                logger.debug("Translation completed successfully")
+                logger.debug("Translation completed successfully (\(result.direction.label))")
+            } catch is CancellationError {
+                isTranslating = false
             } catch {
                 logger.error("Translation failed: \(error.localizedDescription)")
                 errorMessage = error.localizedDescription
@@ -196,6 +224,14 @@ final class TranslationViewModel {
                 isTranslating = false
             }
         }
+    }
+
+    /// Подпись фактического направления для окна, например «🇷🇺 Русский → 🇺🇸 English».
+    /// Показывается, когда источник был «авто» или цель пришлось заменить.
+    var resolvedDirectionLabel: String? {
+        guard let direction = resolvedDirection else { return nil }
+        guard direction.detected != nil || direction.targetChanged else { return nil }
+        return "\(LanguageData.displayName(for: direction.source)) → \(LanguageData.displayName(for: direction.target))"
     }
     
     private func createExplanationPrompt(basePrompt: TranslationPrompt?) -> TranslationPrompt {

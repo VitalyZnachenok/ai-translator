@@ -1,6 +1,17 @@
 {
   "sourceLanguage" : "ru",
   "strings" : {
+    "Фактическое направление перевода" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Actual translation direction"
+          }
+        }
+      }
+    },
     "" : {
 
     },

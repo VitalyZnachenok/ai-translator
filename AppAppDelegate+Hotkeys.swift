@@ -583,13 +583,16 @@ extension AppDelegate {
         }
 
         let translated: String
+        let result: TranslationResult
         do {
-            translated = try await sharedTranslationService.translate(
+            result = try await sharedTranslationService.translate(
                 text: selectedText,
                 from: resolved.source,
                 to: resolved.target,
                 customPrompt: resolved.prompt
             )
+            translated = result.text
+            Self.hotkeyLogger.info("In-place: final direction \(result.direction.label)\(result.retriedForLanguage ? " (retried)" : "")")
         } catch is CancellationError {
             await restoreClipboard(originalText)
             setMenuBarStatus(.idle)
@@ -629,12 +632,12 @@ extension AppDelegate {
         TranslationHistoryStore.shared.add(
             sourceText: selectedText,
             translatedText: translated,
-            sourceLanguage: resolved.source,
-            targetLanguage: resolved.target,
+            sourceLanguage: result.sourceLanguage,
+            targetLanguage: result.targetLanguage,
             origin: "Перевод на месте"
         )
 
-        setMenuBarStatus(.success)
+        setMenuBarStatus(.success, detail: result.direction.label)
         Self.hotkeyLogger.info("In-place translation completed")
     }
 
@@ -691,8 +694,13 @@ extension AppDelegate {
         case idle, busy, success, error
     }
 
-    private func setMenuBarStatus(_ status: InPlaceStatus) {
+    /// - Parameter detail: короткая подпись рядом с иконкой (например, направление
+    ///   «ru→en»), чтобы промах детектора был виден сразу. Сбрасывается вместе с иконкой.
+    private func setMenuBarStatus(_ status: InPlaceStatus, detail: String? = nil) {
         guard let button = statusBarItem?.button else { return }
+
+        button.title = (status == .success && detail != nil) ? " \(detail!)" : ""
+        button.imagePosition = button.title.isEmpty ? .imageOnly : .imageLeading
 
         let symbol: String
         switch status {
@@ -719,9 +727,10 @@ extension AppDelegate {
             button.image = image
         }
 
-        // Авто-сброс иконки для terminal-состояний.
+        // Авто-сброс иконки для terminal-состояний (с подписью направления держим чуть дольше).
         if status == .success || status == .error {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+            let hold: TimeInterval = detail == nil ? 1.2 : 2.5
+            DispatchQueue.main.asyncAfter(deadline: .now() + hold) { [weak self] in
                 self?.setMenuBarStatus(.idle)
             }
         }

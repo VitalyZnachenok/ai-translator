@@ -7,10 +7,10 @@ Smart menu‑bar translator for macOS that works with any OpenAI‑compatible AP
 
 ## Features
 
-- Translate between 16 languages with automatic source detection.
+- Translate between 16 languages with automatic source detection. The source language is detected locally and the direction is fixed before the request: text that is already in the target language is translated into the other language of the pair, never paraphrased.
 - Connect to any OpenAI‑compatible model through connection profiles.
 - Custom prompts for different styles (literal, literary, technical, simplified…).
-- Menu‑bar icon, quick popover and a full translator window.
+- Menu‑bar icon, quick popover and a full translator window with streaming output.
 - Two “quick translate” modes for selected text:
   - **Quick translate in a window** — opens a window with the result.
   - **In‑place translation** — replaces the selected text right inside the
@@ -105,11 +105,11 @@ Anthropic‑совместимые шлюзы и т.п.).
 
 ## Возможности
 
-- Перевод между 16 языками + автоопределение исходного.
+- Перевод между 16 языками + автоопределение исходного. Язык определяется локально, направление фиксируется до запроса: текст, уже написанный на целевом языке, переводится на другой язык пары, а не перефразируется.
 - Подключение к любым OpenAI‑совместимым моделям через профили.
 - Кастомные промпты для разных стилей перевода (буквальный, литературный,
   технический, упрощённый и т.д.).
-- Иконка в menubar, быстрый popover и полноразмерное окно переводчика.
+- Иконка в menubar, быстрый popover и полноразмерное окно переводчика с потоковым выводом.
 - Два режима «быстрого перевода» выделенного текста:
   - **Быстрый перевод в окне** — открывает окно с готовым результатом.
   - **Перевод на месте** — заменяет выделенный текст переводом прямо в

@@ -307,7 +307,14 @@ struct ContentView: View {
                 Text("Результат перевода:")
                     .font(.headline)
                     .foregroundColor(.secondary)
-                
+
+                if let direction = viewModel.resolvedDirectionLabel {
+                    Text(direction)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .help("Фактическое направление перевода")
+                }
+
                 Spacer()
                 
                 if !viewModel.outputText.isEmpty {

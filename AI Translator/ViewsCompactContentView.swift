@@ -237,7 +237,14 @@ struct CompactContentView: View {
                 Text("Результат:")
                     .font(.caption)
                     .foregroundColor(.secondary)
-                
+
+                if let direction = viewModel.resolvedDirectionLabel {
+                    Text(direction)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+
                 Spacer()
                 
                 if !viewModel.outputText.isEmpty {
